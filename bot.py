@@ -1,16 +1,22 @@
-# This is a sample Python script.
+# bot.py
 
-# Press Shift+F10 to execute it or replace it with your code.
-# Press Double Shift to search everywhere for classes, files, tool windows, actions, and settings.
+import os
+import discord
+from discord import app_commands
+from discord.ext import commands, tasks
+import random
+from dotenv import load_dotenv
+
+# region Dotenv setup and imports
+load_dotenv('.env')
+
+TOKEN = os.getenv('DISCORD_TOKEN')
+PREFIX = os.getenv('PREFIX')
+
+client = commands.Bot(command_prefix=PREFIX, intents=discord.Intents.all())
+guild: discord.Guild
 
 
-def print_hi(name):
-    # Use a breakpoint in the code line below to debug your script.
-    print(f'Hi, {name}')  # Press Ctrl+F8 to toggle the breakpoint.
-
-
-# Press the green button in the gutter to run the script.
-if __name__ == '__main__':
-    print_hi('PyCharm')
-
-# See PyCharm help at https://www.jetbrains.com/help/pycharm/
+@client.event
+async def on_ready():
+    print(f'Bot is online')
