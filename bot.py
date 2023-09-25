@@ -7,6 +7,7 @@ from discord.ext import commands, tasks
 import random
 from dotenv import load_dotenv
 from src.letterbot.src.letterboxdpy import user as lb_user
+from src.letterbot.src.letterboxdpy import movie as lb_movie
 import datetime as dt
 from datetime import datetime, timedelta
 import mysql.connector
@@ -21,36 +22,41 @@ db_address = os.getenv('DATABASE_ADDRESS')
 db_name = os.getenv('DATABASE_NAME')
 db_user = os.getenv('DATABASE_USER')
 db_pass = os.getenv('DATABASE_PASS')
+is_test = os.getenv('TEST') == '1'
 
 client = commands.Bot(command_prefix=PREFIX, intents=discord.Intents.all())
 
 global log_channel
 global mydb
-global cursor
 
 
 @client.event
 async def on_ready():
     global log_channel
     global mydb
-    global cursor
 
     await client.login(TOKEN)
     print(f'Bot is online')
     log_channel = client.get_channel(int(LOG_CHANNEL))
-    mydb = mysql.connector.connect(
-        host=str(db_address),
-        user=str(db_user),
-        password=str(db_pass),
-        database=str(db_name)
-    )
-    print(f'Bot is connected to the database')
 
-    cursor = mydb.cursor()
+    try:
+        mydb = mysql.connector.connect(
+            host=str(db_address),
+            user=str(db_user),
+            password=str(db_pass),
+            database=str(db_name)
+        )
+        print(f'Bot is able to connect to the database')
+    except Exception as e:
+        print(f'While trying to connect to the database: {str(e)}')
+        await log_error(e)
+    if is_test:
+        print('Running as a dev environment')
+    else:
+        print('Running as production')
 
-    cursor.execute(f'SELECT member, account, guild FROM users')
 
-
+# region Logging
 async def log(output: discord.Embed):
     global log_channel
     output.set_footer(text=datetime.now())
@@ -77,6 +83,7 @@ async def log_slash(author: discord.Member, specific, parameters: dict = None, m
 async def log_error(error):
     embed = discord.Embed(title=f'ERROR', description=str(error), colour=15548997)
     await log(embed)
+# endregion
 
 
 @client.event
@@ -113,9 +120,35 @@ async def check_admin(member: discord.Member):
     return False
 
 
+async def check_guild(guild: discord.Guild) -> bool:
+    # adds the guild to the database if it isn't already then returns whether the guild is a test server
+    global is_test
+    global mydb
+    cursor = mydb.cursor()
+    cursor.execute(f"SELECT guild, test FROM guilds WHERE guild='{guild.id}'")
+    # should only ever be length 1 or 0
+    for item in cursor:
+        test = item[1] == 1
+        cursor.close()
+        return test
+
+    # will only get here if guild was not in the database
+    # always default test to 0. Manually set a test server in the database
+    cursor.execute(f"INSERT INTO guilds (guild, test) VALUES ('{guild.id}', b'0')")
+    mydb.commit()
+    cursor.close()
+    return False
+
+
 @client.tree.command(name="link_account", description="Link a Letterboxd account to a discord user")
 @app_commands.describe(username="Letterboxd account username", member="Discord member")
 async def link_account(interaction: discord.Interaction, username: str, member: discord.Member = None):
+
+    global mydb
+    global is_test
+
+    if await check_guild(interaction.guild) != is_test:
+        return
 
     # if member left default, set to self
     if member is None:
@@ -138,21 +171,20 @@ async def link_account(interaction: discord.Interaction, username: str, member: 
             return
 
     # make sure Letterboxd account hasn't already been paired to a member in this discord server
-    cursor.execute(f'SELECT member, account, guild FROM users')
+    cursor = mydb.cursor()
+    cursor.execute(f"SELECT member, account, guild FROM users WHERE guild='{interaction.guild_id}' "
+                   f"AND WHERE account='{username}'")
     for item in cursor:
-        if str(item[2]) != interaction.guild_id:
-            continue
-        if str(item[1]) == username:
-            if str(item[0]) == member.id:
-                await interaction.response.send_message(f'This Letterboxd account is '
-                                                        f'already linked to this discord member',
-                                                        ephemeral=True)
-                return
-            else:
-                await interaction.response.send_message(f'This Letterboxd account is '
-                                                        f'already linked to another discord member in this server',
-                                                        ephemeral=True)
-                return
+        if str(item[0]) == member.id:
+            await interaction.response.send_message(f'This Letterboxd account is '
+                                                    f'already linked to this discord member',
+                                                    ephemeral=True)
+            return
+        else:
+            await interaction.response.send_message(f'This Letterboxd account is '
+                                                    f'already linked to another discord member in this server',
+                                                    ephemeral=True)
+            return
 
     # only allow someone to change another user's linked account if they're an admin
     if not await check_admin(interaction.user) and interaction.user != member:

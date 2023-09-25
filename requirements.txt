@@ -4,3 +4,4 @@ bs4
 lxml
 mysql.connector
 requests
+beautifulsoup4
