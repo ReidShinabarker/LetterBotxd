@@ -1,6 +1,6 @@
 git+https://github.com/Rapptz/discord.py
 python-dotenv
-letterboxdpy
 bs4
 lxml
 mysql.connector
+requests

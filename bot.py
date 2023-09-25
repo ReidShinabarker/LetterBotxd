@@ -44,9 +44,15 @@ async def on_ready():
         password=str(db_pass),
         database=str(db_name)
     )
-    print(f'Bot is connected to the MariaDB database')
+    print(f'Bot is connected to the database')
 
     cursor = mydb.cursor()
+
+    cursor.execute(f'SELECT member, account, guild FROM users')
+
+    nick = user.User("Cinebarker")
+    print(nick)
+    pass
 
 
 async def log(output: discord.Embed):
@@ -115,6 +121,12 @@ async def check_admin(member: discord.Member):
 @app_commands.describe(username="Letterboxd account username", member="Discord member")
 async def link_account(interaction: discord.Interaction, username: str, member: discord.Member = None):
 
+    # if member left default, set to self
+    if member is None:
+        member = interaction.user
+
+    await log_slash(interaction.user, "link_account", {"username": username, "member": member})
+
     # make sure Letterboxd user exists
     try:
         user.User(username)
@@ -122,23 +134,34 @@ async def link_account(interaction: discord.Interaction, username: str, member: 
         if str(e) == "No user found":
             await interaction.response.send_message(f'Error finding Letterboxd user with that name.'
                                                     f'\nPlease recheck your spelling.', ephemeral=True)
+            return
         else:
             await log_error(e)
             await interaction.response.send_message(f'Unknown error. Ask your admin to check the error log',
                                                     ephemeral=True)
+            return
 
     # make sure Letterboxd account hasn't already been paired to a member in this discord server
-    # if username already in use
-    #     await interaction.response.send_message(f'Letterboxd account already paired to a discord user in this server',
-    #                                             ephemeral=True)
-
-    # if member left default, assume self
-    if member is None:
-        member = interaction.user
+    cursor.execute(f'SELECT member, account, guild FROM users')
+    for item in cursor:
+        if str(item[2]) != interaction.guild_id:
+            continue
+        if str(item[1]) == username:
+            if str(item[0]) == member.id:
+                await interaction.response.send_message(f'This Letterboxd account is '
+                                                        f'already linked to this discord member',
+                                                        ephemeral=True)
+                return
+            else:
+                await interaction.response.send_message(f'This Letterboxd account is '
+                                                        f'already linked to another discord member in this server',
+                                                        ephemeral=True)
+                return
 
     # only allow someone to change another user's linked account if they're an admin
     if not await check_admin(interaction.user) and interaction.user != member:
         await interaction.response.send_message(f'Only an admin can link another user\'s account', ephemeral=True)
+        return
 
     # don't let user change their account if they already have one linked
     # Else If member already has a letterboxd account paired and is not an admin
@@ -152,7 +175,8 @@ async def link_account(interaction: discord.Interaction, username: str, member: 
         await interaction.response.send_message(f'{member.display_name} '
                                                 f'was linked to the Letterboxd account "{username}"',
                                                 ephemeral=True)
+        return
 
-    await log_slash(interaction.user, "link_account", {"username": username, "member": member})
+    return
 
 client.run(TOKEN)
