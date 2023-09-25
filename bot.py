@@ -99,7 +99,7 @@ async def on_message(message):
         return
 
     # basic text command to sync slash command changes
-    if message.content.lower() == "sync commands" and await check_admin(message.author):
+    if message.content.lower() == "sync commands" and message.author.guild_permissions.administrator:
         await sync_commands(message)
 
 
@@ -112,12 +112,6 @@ async def sync_commands(message: discord.Message):
     except Exception as e:
         print(e)
         await message.reply(e.__str__())
-
-
-async def check_admin(member: discord.Member):
-    if member.guild_permissions.administrator:
-        return True
-    return False
 
 
 async def check_guild(guild: discord.Guild) -> bool:
@@ -156,7 +150,13 @@ async def link_account(interaction: discord.Interaction, username: str, member: 
 
     await log_slash(interaction.user, "link_account", {"username": username, "member": member})
 
-    is_admin = await check_admin(interaction.user)
+    # only allow bots to have linked accounts on test servers
+    if member.bot and not is_test:
+        await interaction.response.send_message(f'Bots cannot have linked accounts',
+                                                ephemeral=True)
+        return
+
+    is_admin = interaction.user.guild_permissions.administrator
 
     cursor = mydb.cursor(buffered=True)
 
@@ -227,8 +227,14 @@ async def clear_link(interaction: discord.Interaction, member: discord.Member):
     if await check_guild(interaction.guild) != is_test:
         return
 
-    if not await check_admin(interaction.user):
+    if not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message(f'This is an Admin-only command',
+                                                ephemeral=True)
+        return
+
+    # bots can have linked accounts on test servers, so allow them to be removed there as well
+    if member.bot and not is_test:
+        await interaction.response.send_message(f'Bots cannot have linked accounts, so there is nothing to clear',
                                                 ephemeral=True)
         return
 
@@ -285,5 +291,7 @@ async def recommend(interaction: discord.Interaction):
 
     cursor = mydb.cursor(buffered=True)
     cursor.execute(f"SELECT member, account FROM users WHERE guild='{interaction.guild_id}'")
+
+
 
 client.run(TOKEN)
