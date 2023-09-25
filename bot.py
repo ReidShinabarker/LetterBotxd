@@ -6,8 +6,9 @@ from discord import app_commands
 from discord.ext import commands, tasks
 import random
 from dotenv import load_dotenv
-import temp_user as lb_user
-from src.letterbot.src.letterboxdpy import movie as lb_movie
+# from src.letterbot.src.letterboxdpy import user as lb_user
+from letterboxdpy import user as lb_user
+from letterboxdpy import list as lb_list
 import datetime as dt
 from datetime import datetime, timedelta
 import mysql.connector
@@ -292,6 +293,57 @@ async def recommend(interaction: discord.Interaction):
     cursor = mydb.cursor(buffered=True)
     cursor.execute(f"SELECT member, account FROM users WHERE guild='{interaction.guild_id}'")
 
+    full_response = "Finding linked Letterboxd accounts..."
+    await interaction.response.send_message(embed=discord.Embed(title=f"**Movie Recommendation**",
+                                                                description=full_response))
+    movies = {}
+    users = []
+    for item in cursor:
+        users.append(lb_user.User(str(item[1])))
+
+    full_response += f"\nCollecting movies in watchlists..."
+    await interaction.edit_original_response(embed=discord.Embed(title=f"**Movie Recommendation**",
+                                                                 description=full_response))
+    for user in users:
+        for movie in lb_user.user_films_on_watchlist(user):
+            # increment the key of a movie by 2 for each watchlist it is in
+            if movie in movies:
+                movies[movie] = movies[movie] + 2
+            else:
+                movies[movie] = 2
+
+    full_response += f"\nChecking which movies have already been seen by people..."
+    await interaction.edit_original_response(embed=discord.Embed(title=f"**Movie Recommendation**",
+                                                                 description=full_response))
+    for user in users:
+        for movie in lb_user.user_films_watched(user):
+            # decrement the key of a movie by 1 for each person that has seen it
+            if movie in movies:
+                movies[movie] = movies[movie] - 1
+
+    full_response += f"\nCalculating recommendations..."
+    await interaction.edit_original_response(embed=discord.Embed(title=f"**Movie Recommendation**",
+                                                                 description=full_response))
+
+    sorted_movies = sorted(movies.items(), key=lambda x: x[1], reverse=True)
+    full_response = ''
+    max_recommendations = 10
+    i = 0
+    for movie in sorted_movies:
+        if i >= max_recommendations:
+            break
+        next_movie = f"{movie[1]} [{movie[0][0]}](https://www.letterboxd.com/film/{movie[0][1]}/)\n"
+        # 4096 characters is the max length for an embed description. End early if you're going to go over
+        if len(full_response) + len(next_movie) >= 4096:
+            break
+        full_response += next_movie
+        i += 1
+
+    await interaction.edit_original_response(embed=discord.Embed(title=f"**Movie Recommendation**",
+                                                                 description=full_response))
+
+    cursor.close()
+    return
 
 
 client.run(TOKEN)

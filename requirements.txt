@@ -5,3 +5,4 @@ lxml
 mysql.connector
 requests
 beautifulsoup4
+git+https://github.com/ReidShinabarker/letterboxdpy
