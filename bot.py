@@ -158,7 +158,7 @@ async def link_account(interaction: discord.Interaction, username: str, member: 
 
     is_admin = await check_admin(interaction.user)
 
-    cursor = mydb.cursor()
+    cursor = mydb.cursor(buffered=True)
 
     # only allow someone to change another user's linked account if they're an admin
     if not is_admin:
@@ -169,8 +169,7 @@ async def link_account(interaction: discord.Interaction, username: str, member: 
 
         # don't let user change their account if they already have one linked and aren't an admin
         cursor.execute(f"SELECT * FROM users WHERE member='{member.id}'")
-        for item in cursor:
-            # this will only go off if there is at least 1 matching member
+        if cursor.rowcount >= 1:
             await interaction.response.send_message(f'Letterboxd account already linked.\n'
                                                     f'Ask an admin to change your account if it is incorrect',
                                                     ephemeral=True)
@@ -219,6 +218,33 @@ async def link_account(interaction: discord.Interaction, username: str, member: 
         cursor.close()
         return
 
+    cursor.close()
+    return
+
+
+@client.tree.command(name="display_members", description="Prints out a list of discord members "
+                                                         "and their paired letterboxd accounts")
+async def display_members(interaction: discord.Interaction):
+    global mydb
+    global is_test
+
+    if await check_guild(interaction.guild) != is_test:
+        return
+
+    cursor = mydb.cursor(buffered=True)
+    cursor.execute(f"SELECT member, account, guild FROM users WHERE guild='{interaction.guild_id}'")
+    if cursor.rowcount <= 0:
+        await interaction.response.send_message(f"No linked members in this discord server", ephemeral=True)
+        cursor.close()
+        return
+
+    desc = ''
+    for item in cursor:
+        desc += (f'{(await client.fetch_user(int(item[0]))).mention} : '
+                 f'[{str(item[1]).lower()}](https://letterboxd.com/{str(item[1])}/)\n')
+
+    final = discord.Embed(description=desc, title='**LINKED ACCOUNTS IN THIS SERVER**')
+    await interaction.response.send_message(embed=final)
     cursor.close()
     return
 
