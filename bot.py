@@ -48,7 +48,7 @@ async def on_ready():
         )
         print(f'Bot is able to connect to the database')
     except Exception as e:
-        print(f'While trying to connect to the database: {str(e)}')
+        print(f'ERROR: While trying to connect to the database: {str(e)}')
         await log_error(e)
     if is_test:
         print('Running as a dev environment')
@@ -156,9 +156,30 @@ async def link_account(interaction: discord.Interaction, username: str, member: 
 
     await log_slash(interaction.user, "link_account", {"username": username, "member": member})
 
+    is_admin = await check_admin(interaction.user)
+
+    cursor = mydb.cursor()
+
+    # only allow someone to change another user's linked account if they're an admin
+    if not is_admin:
+        if interaction.user != member:
+            await interaction.response.send_message(f'Only an admin can link another user\'s account', ephemeral=True)
+            cursor.close()
+            return
+
+        # don't let user change their account if they already have one linked and aren't an admin
+        cursor.execute(f"SELECT * FROM users WHERE member='{member.id}'")
+        for item in cursor:
+            # this will only go off if there is at least 1 matching member
+            await interaction.response.send_message(f'Letterboxd account already linked.\n'
+                                                    f'Ask an admin to change your account if it is incorrect',
+                                                    ephemeral=True)
+            cursor.close()
+            return
+
     # make sure Letterboxd user exists
     try:
-        user = lb_user.User(username)
+        lb_user.User(username)
     except Exception as e:
         if str(e) == "No user found":
             await interaction.response.send_message(f'Error finding Letterboxd user with that name.'
@@ -171,40 +192,34 @@ async def link_account(interaction: discord.Interaction, username: str, member: 
             return
 
     # make sure Letterboxd account hasn't already been paired to a member in this discord server
-    cursor = mydb.cursor()
     cursor.execute(f"SELECT member, account, guild FROM users WHERE guild='{interaction.guild_id}' "
-                   f"AND WHERE account='{username}'")
+                   f"AND account='{username}'")
     for item in cursor:
-        if str(item[0]) == member.id:
+        if str(item[0]) == str(member.id):
             await interaction.response.send_message(f'This Letterboxd account is '
                                                     f'already linked to this discord member',
                                                     ephemeral=True)
+            cursor.close()
             return
         else:
             await interaction.response.send_message(f'This Letterboxd account is '
                                                     f'already linked to another discord member in this server',
                                                     ephemeral=True)
+            cursor.close()
             return
-
-    # only allow someone to change another user's linked account if they're an admin
-    if not await check_admin(interaction.user) and interaction.user != member:
-        await interaction.response.send_message(f'Only an admin can link another user\'s account', ephemeral=True)
-        return
-
-    # don't let user change their account if they already have one linked
-    # Else If member already has a letterboxd account paired and is not an admin
-    #     await interaction.response.send_message(f'Letterboxd account already linked.\n'
-    #                                             f'Ask an admin to change your account if it is incorrect',
-    #                                             ephemeral=True)
 
     # otherwise link account
     else:
-        # link account to user
+        cursor.execute(f"REPLACE INTO users (member, account, guild) VALUES "
+                       f"('{member.id}','{username}', '{interaction.guild_id}')")
+        mydb.commit()
         await interaction.response.send_message(f'{member.display_name} '
                                                 f'was linked to the Letterboxd account "{username}"',
                                                 ephemeral=True)
+        cursor.close()
         return
 
+    cursor.close()
     return
 
 client.run(TOKEN)
