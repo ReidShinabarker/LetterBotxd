@@ -6,7 +6,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 import random
 from dotenv import load_dotenv
-from letterboxdpy import user
+from src.letterbot.src.letterboxdpy import user as lb_user
 import datetime as dt
 from datetime import datetime, timedelta
 import mysql.connector
@@ -49,10 +49,6 @@ async def on_ready():
     cursor = mydb.cursor()
 
     cursor.execute(f'SELECT member, account, guild FROM users')
-
-    nick = user.User("Cinebarker")
-    print(nick)
-    pass
 
 
 async def log(output: discord.Embed):
@@ -129,7 +125,7 @@ async def link_account(interaction: discord.Interaction, username: str, member: 
 
     # make sure Letterboxd user exists
     try:
-        user.User(username)
+        user = lb_user.User(username)
     except Exception as e:
         if str(e) == "No user found":
             await interaction.response.send_message(f'Error finding Letterboxd user with that name.'
