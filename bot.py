@@ -178,7 +178,9 @@ async def link_account(interaction: discord.Interaction, username: str, member: 
 
     # make sure Letterboxd user exists
     try:
-        lb_user.User(username)
+        user = lb_user.User(username)
+        # set username to the capitalization of the official online account
+        username = user.username
     except Exception as e:
         if str(e) == "No user found":
             await interaction.response.send_message(f'Error finding Letterboxd user with that name.'
@@ -232,7 +234,7 @@ async def display_members(interaction: discord.Interaction):
         return
 
     cursor = mydb.cursor(buffered=True)
-    cursor.execute(f"SELECT member, account, guild FROM users WHERE guild='{interaction.guild_id}'")
+    cursor.execute(f"SELECT member, account, guild FROM users WHERE guild='{interaction.guild_id}' ORDER BY account")
     if cursor.rowcount <= 0:
         await interaction.response.send_message(f"No linked members in this discord server", ephemeral=True)
         cursor.close()
@@ -241,11 +243,23 @@ async def display_members(interaction: discord.Interaction):
     desc = ''
     for item in cursor:
         desc += (f'{(await client.fetch_user(int(item[0]))).mention} : '
-                 f'[{str(item[1]).upper()}](https://letterboxd.com/{str(item[1])}/)\n')
+                 f'[{str(item[1])}](https://letterboxd.com/{str(item[1])}/)\n')
 
     final = discord.Embed(description=desc, title='**LINKED ACCOUNTS IN THIS SERVER**')
     await interaction.response.send_message(embed=final)
     cursor.close()
     return
+
+
+@client.tree.command(name="recommend", description="Recommend a movie based on present members' "
+                                                   "watch-lists and absent members' watched-lists")
+async def recommend(interaction: discord.Interaction):
+    global mydb
+    global is_test
+
+    if await check_guild(interaction.guild) != is_test:
+        return
+
+    cursor = mydb.cursor(buffered=True)
 
 client.run(TOKEN)
