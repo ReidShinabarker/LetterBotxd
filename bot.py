@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 from letterboxdpy import user
 import datetime as dt
 from datetime import datetime, timedelta
+import mysql.connector
 
 # region Dotenv setup and imports
 load_dotenv('.env')
@@ -16,18 +17,36 @@ load_dotenv('.env')
 TOKEN = os.getenv('DISCORD_TOKEN')
 PREFIX = os.getenv('PREFIX')
 LOG_CHANNEL = os.getenv('LOG_CHANNEL')
+db_address = os.getenv('DATABASE_ADDRESS')
+db_name = os.getenv('DATABASE_NAME')
+db_user = os.getenv('DATABASE_USER')
+db_pass = os.getenv('DATABASE_PASS')
 
 client = commands.Bot(command_prefix=PREFIX, intents=discord.Intents.all())
 
 global log_channel
+global mydb
+global cursor
 
 
 @client.event
 async def on_ready():
     global log_channel
+    global mydb
+    global cursor
+
     await client.login(TOKEN)
     print(f'Bot is online')
     log_channel = client.get_channel(int(LOG_CHANNEL))
+    mydb = mysql.connector.connect(
+        host=str(db_address),
+        user=str(db_user),
+        password=str(db_pass),
+        database=str(db_name)
+    )
+    print(f'Bot is connected to the MariaDB database')
+
+    cursor = mydb.cursor()
 
 
 async def log(output: discord.Embed):

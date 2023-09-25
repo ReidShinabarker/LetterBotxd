@@ -3,3 +3,4 @@ python-dotenv
 letterboxdpy
 bs4
 lxml
+mysql.connector
