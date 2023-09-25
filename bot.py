@@ -6,7 +6,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 import random
 from dotenv import load_dotenv
-from src.letterbot.src.letterboxdpy import user as lb_user
+import temp_user as lb_user
 from src.letterbot.src.letterboxdpy import movie as lb_movie
 import datetime as dt
 from datetime import datetime, timedelta
@@ -196,18 +196,12 @@ async def link_account(interaction: discord.Interaction, username: str, member: 
     cursor.execute(f"SELECT member, account, guild FROM users WHERE guild='{interaction.guild_id}' "
                    f"AND account='{username}'")
     for item in cursor:
-        if str(item[0]) == str(member.id):
-            await interaction.response.send_message(f'This Letterboxd account is '
-                                                    f'already linked to this discord member',
-                                                    ephemeral=True)
-            cursor.close()
-            return
-        else:
-            await interaction.response.send_message(f'This Letterboxd account is '
-                                                    f'already linked to another discord member in this server',
-                                                    ephemeral=True)
-            cursor.close()
-            return
+        await interaction.response.send_message(f'This Letterboxd account is '
+                                                f'already linked to '
+                                                f'{client.get_user(int(item[0])).mention}',
+                                                ephemeral=True)
+        cursor.close()
+        return
 
     # otherwise link account
     else:
@@ -220,6 +214,35 @@ async def link_account(interaction: discord.Interaction, username: str, member: 
         cursor.close()
         return
 
+    cursor.close()
+    return
+
+
+@client.tree.command(name="clear_link", description="ADMIN: Removes a discord user from the list of linked accounts")
+@app_commands.describe(member="Discord member")
+async def clear_link(interaction: discord.Interaction, member: discord.Member):
+    global mydb
+    global is_test
+
+    if await check_guild(interaction.guild) != is_test:
+        return
+
+    if not await check_admin(interaction.user):
+        await interaction.response.send_message(f'This is an Admin-only command',
+                                                ephemeral=True)
+        return
+
+    cursor = mydb.cursor(buffered=True)
+    cursor.execute(f"SELECT member FROM users WHERE member='{member.id}' AND guild='{interaction.guild_id}'")
+    if cursor.rowcount <= 0:
+        await interaction.response.send_message(f'This user does not have a paired Letterboxd account',
+                                                ephemeral=True)
+        cursor.close()
+        return
+    cursor.execute(f"DELETE FROM users WHERE member='{member.id}' AND guild='{interaction.guild_id}'")
+    mydb.commit()
+    await interaction.response.send_message(f'Successfully removed {member.mention} '
+                                            f'and their paired Letterboxd account', ephemeral=True)
     cursor.close()
     return
 
@@ -261,5 +284,6 @@ async def recommend(interaction: discord.Interaction):
         return
 
     cursor = mydb.cursor(buffered=True)
+    cursor.execute(f"SELECT member, account FROM users WHERE guild='{interaction.guild_id}'")
 
 client.run(TOKEN)
