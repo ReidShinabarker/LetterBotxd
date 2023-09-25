@@ -241,7 +241,7 @@ async def display_members(interaction: discord.Interaction):
     desc = ''
     for item in cursor:
         desc += (f'{(await client.fetch_user(int(item[0]))).mention} : '
-                 f'[{str(item[1]).lower()}](https://letterboxd.com/{str(item[1])}/)\n')
+                 f'[{str(item[1]).upper()}](https://letterboxd.com/{str(item[1])}/)\n')
 
     final = discord.Embed(description=desc, title='**LINKED ACCOUNTS IN THIS SERVER**')
     await interaction.response.send_message(embed=final)
