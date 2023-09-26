@@ -458,7 +458,7 @@ async def recommend(interaction: discord.Interaction):
             break
         score_column += f"{movie[1]}\n"
         title_column += f"[{movie[0][0]}](https://www.letterboxd.com/film/{movie[0][1]}/)\n"
-        rating_column += f"{movie[0][2]}\n"
+        rating_column += f"{'%.2f' % movie[0][2]}\n"
         i += 1
 
     final_embed = discord.Embed(title=f"**Movie Recommendation**", description=full_response)
