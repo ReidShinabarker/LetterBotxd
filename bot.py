@@ -114,6 +114,9 @@ async def on_message(message):
     if isinstance(message.channel, discord.DMChannel):
         pass
 
+    if await check_guild(message.guild) != is_test:
+        return
+
     # ignore non-text messages and messages from this bot
     if str(message.channel.type) != 'text' \
             or message.author == client.user:
@@ -153,6 +156,19 @@ async def check_guild(guild: discord.Guild) -> bool:
     mydb.commit()
     cursor.close()
     return False
+
+
+@client.tree.command(name="status", description="Prints out a basic status to see if the bot is running")
+async def status(interaction: discord.Interaction):
+    global mydb
+    global is_test
+
+    if await check_guild(interaction.guild) != is_test:
+        return
+
+    await log_slash(interaction.user, "status", interaction.guild)
+
+    await interaction.response.send_message(f"Bot is running", ephemeral=True)
 
 
 @client.tree.command(name="link_account", description="Link a Letterboxd account to a discord user")
