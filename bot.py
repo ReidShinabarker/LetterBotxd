@@ -78,6 +78,8 @@ async def log_slash(author: discord.Member, specific, guild: discord.Guild,
     desc = "**Server:**\n"
     desc += f"{guild.name} : {guild.id}\n"
 
+    print(f"{specific} from {author}:{author.id} in {guild}:{guild.id} with params: {parameters}")
+
     if parameters is not None:
         desc += "**Parameters:**\n"
         for item in parameters:
@@ -113,6 +115,7 @@ async def on_message(message):
     # if message is a DM
     if isinstance(message.channel, discord.DMChannel):
         pass
+        return
 
     if await check_guild(message.guild) != is_test:
         return
@@ -130,7 +133,11 @@ async def on_message(message):
 async def sync_commands(message: discord.Message):
     print(f'Syncing commands...')
     try:
-        synced = await client.tree.sync()
+        if await check_guild(message.guild):
+            synced = await client.tree.sync(guild=message.guild)
+            print(f'Syncing to test guild only')
+        else:
+            synced = await client.tree.sync()
         print(f'Synced {len(synced)} command(s)\n')
         await message.reply(content=f'Synced {len(synced)} command(s)\n')
     except Exception as e:
@@ -140,6 +147,7 @@ async def sync_commands(message: discord.Message):
 
 async def check_guild(guild: discord.Guild) -> bool:
     # adds the guild to the database if it isn't already then returns whether the guild is a test server
+    # returns whether this is a test guild
     global is_test
     global mydb
     cursor = mydb.cursor()
