@@ -9,9 +9,13 @@ from dotenv import load_dotenv
 # from src.letterbot.src.letterboxdpy import user as lb_user
 from letterboxdpy import user as lb_user
 from letterboxdpy import list as lb_list
+from letterboxdpy import movie as lb_movie
 import datetime as dt
 from datetime import datetime, timedelta
 import mysql.connector
+import functools
+import typing
+import asyncio
 
 # region Dotenv setup and imports
 load_dotenv('.env')
@@ -29,12 +33,14 @@ client = commands.Bot(command_prefix=PREFIX, intents=discord.Intents.all())
 
 global log_channel
 global mydb
+global max_recommendations
 
 
 @client.event
 async def on_ready():
     global log_channel
     global mydb
+    global max_recommendations
 
     await client.login(TOKEN)
     print(f'Bot is online')
@@ -56,6 +62,9 @@ async def on_ready():
     else:
         print('Running as production')
 
+    # import saved data
+    max_recommendations = 10
+
 
 # region Logging
 async def log(output: discord.Embed):
@@ -64,8 +73,11 @@ async def log(output: discord.Embed):
     await log_channel.send(embed=output)
 
 
-async def log_slash(author: discord.Member, specific, parameters: dict = None, message: discord.Message = None):
-    desc = ""
+async def log_slash(author: discord.Member, specific, guild: discord.Guild,
+                    parameters: dict = None, message: discord.Message = None):
+    desc = "**Server:**\n"
+    desc += f"{guild.name} : {guild.id}\n"
+
     if parameters is not None:
         desc += "**Parameters:**\n"
         for item in parameters:
@@ -86,6 +98,12 @@ async def log_error(error):
     await log(embed)
 # endregion
 
+
+def to_thread(func: typing.Callable) -> typing.Coroutine:
+    @functools.wraps(func)
+    async def wrapper(*args, **kwargs):
+        return await asyncio.to_thread(func, *args, **kwargs)
+    return wrapper
 
 @client.event
 async def on_message(message):
@@ -149,7 +167,8 @@ async def link_account(interaction: discord.Interaction, username: str, member: 
     if member is None:
         member = interaction.user
 
-    await log_slash(interaction.user, "link_account", {"username": username, "member": member})
+    await log_slash(interaction.user, "link_account", interaction.guild,
+                    {"username": username, "member": member})
 
     # only allow bots to have linked accounts on test servers
     if member.bot and not is_test:
@@ -228,6 +247,9 @@ async def clear_link(interaction: discord.Interaction, member: discord.Member):
     if await check_guild(interaction.guild) != is_test:
         return
 
+    await log_slash(interaction.user, "clear_link", interaction.guild,
+                    {"member": member})
+
     if not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message(f'This is an Admin-only command',
                                                 ephemeral=True)
@@ -263,6 +285,8 @@ async def display_members(interaction: discord.Interaction):
     if await check_guild(interaction.guild) != is_test:
         return
 
+    await log_slash(interaction.user, "display_members", interaction.guild)
+
     cursor = mydb.cursor(buffered=True)
     cursor.execute(f"SELECT member, account, guild FROM users WHERE guild='{interaction.guild_id}' ORDER BY account")
     if cursor.rowcount <= 0:
@@ -281,14 +305,19 @@ async def display_members(interaction: discord.Interaction):
     return
 
 
+@to_thread
 @client.tree.command(name="recommend", description="Recommend a movie based on present members' "
                                                    "watch-lists and absent members' watched-lists")
 async def recommend(interaction: discord.Interaction):
     global mydb
     global is_test
+    global max_recommendations
 
     if await check_guild(interaction.guild) != is_test:
         return
+
+    await log_slash(interaction.user, "recommend", interaction.guild,
+                    {})
 
     cursor = mydb.cursor(buffered=True)
     cursor.execute(f"SELECT member, account FROM users WHERE guild='{interaction.guild_id}'")
@@ -321,18 +350,41 @@ async def recommend(interaction: discord.Interaction):
             if movie in movies:
                 movies[movie] = movies[movie] - 1
 
+    full_response += f"\nObjectively calculating how good each movie is..."
+    await interaction.edit_original_response(embed=discord.Embed(title=f"**Movie Recommendation**",
+                                                                 description=full_response))
+
+    sorted_movies = sorted(movies.items(), key=lambda x: (x[1]), reverse=True)
+
+    # find the lowest score of the x number of movies that are going to be recommended
+    # to know how many ratings need to be looked up
+    lowest_score = sorted_movies[max_recommendations-1][1]
+
+    # convert back to dict to be easier to work with
+    sorted_movies = dict(sorted_movies)
+
+    # find the average rating for each recommendation and add it to the movie tuple
+    rated_movies = {}
+    for movie in sorted_movies:
+        # can stop looking up ratings if it doesn't have a chance to be recommended anyway
+        if lowest_score > sorted_movies[movie]:
+            break
+        rating = float(lb_movie.Movie(movie[1]).rating.split()[0])
+        rated_movies[(movie[0], movie[1], rating)] = movies[movie]
+
+    # sort again, this time using the rating as a tiebreaker
+    sorted_movies = sorted(rated_movies.items(), key=lambda x: (x[1], x[0][2]), reverse=True)
+
     full_response += f"\nCalculating recommendations..."
     await interaction.edit_original_response(embed=discord.Embed(title=f"**Movie Recommendation**",
                                                                  description=full_response))
 
-    sorted_movies = sorted(movies.items(), key=lambda x: x[1], reverse=True)
     full_response = ''
-    max_recommendations = 10
     i = 0
     for movie in sorted_movies:
         if i >= max_recommendations:
             break
-        next_movie = f"{movie[1]} [{movie[0][0]}](https://www.letterboxd.com/film/{movie[0][1]}/)\n"
+        next_movie = f"{movie[1]} [{movie[0][0]}](https://www.letterboxd.com/film/{movie[0][1]}/) {movie[0][2]}\n"
         # 4096 characters is the max length for an embed description. End early if you're going to go over
         if len(full_response) + len(next_movie) >= 4096:
             break
