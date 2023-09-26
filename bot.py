@@ -134,6 +134,7 @@ async def sync_commands(message: discord.Message):
     print(f'Syncing commands...')
     try:
         if await check_guild(message.guild):
+            client.tree.copy_global_to(guild=message.guild)
             synced = await client.tree.sync(guild=message.guild)
             print(f'Syncing to test guild only')
         else:
@@ -166,17 +167,47 @@ async def check_guild(guild: discord.Guild) -> bool:
     return False
 
 
-@client.tree.command(name="status", description="Prints out a basic status to see if the bot is running")
-async def status(interaction: discord.Interaction):
+@client.tree.command(name="help", description="Gives a more in-depth description of available commands")
+async def help(interaction: discord.Interaction):
     global mydb
     global is_test
 
     if await check_guild(interaction.guild) != is_test:
         return
 
-    await log_slash(interaction.user, "status", interaction.guild)
+    await log_slash(interaction.user, "help", interaction.guild)
 
-    await interaction.response.send_message(f"Bot is running", ephemeral=True)
+    total_help = f'# **SLASH COMMANDS**\n'
+    total_help += await slash_describer("recommend",
+                                        "Recommend a list of movies that would be good "
+                                        "for the users of the discord with paired Letterboxd accounts",
+                                        parameters={})
+    total_help += await slash_describer("display_members",
+                                        "Display all Discord users that have paired Letterboxd accounts "
+                                        "with links to the Letterboxd accounts")
+    total_help += await slash_describer("link_account",
+                                        "Links a Letterboxd account to a discord user in this server\n "
+                                        "Only Admins can link an account to another user or overwrite a linked account",
+                                        parameters={'username': 'The Letterboxd account username',
+                                                    'member': 'The Discord user'})
+    total_help += await slash_describer("clear_link",
+                                        "ADMIN ONLY. Clears the link between a Discord user"
+                                        " and their paired Letterboxd account",
+                                        parameters={'member': 'The Discord user'})
+
+    await interaction.response.send_message(total_help, ephemeral=True)
+
+
+# creates a text block describing a slash command
+async def slash_describer(name: str, description: str, parameters: dict = None):
+    final = f'## **/{name}**\n'
+    final += f'**Description**\n {description}\n'
+    if parameters is not None:
+        final += f'**Parameters**\n'
+        for item in parameters:
+            final += f' {item} : {parameters[item]}\n'
+    final += "\n"
+    return final
 
 
 @client.tree.command(name="link_account", description="Link a Letterboxd account to a discord user")
