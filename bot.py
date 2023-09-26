@@ -117,9 +117,6 @@ async def on_message(message):
         pass
         return
 
-    if await check_guild(message.guild) != is_test:
-        return
-
     # ignore non-text messages and messages from this bot
     if str(message.channel.type) != 'text' \
             or message.author == client.user:
@@ -131,9 +128,12 @@ async def on_message(message):
 
 
 async def sync_commands(message: discord.Message):
+    test_guild = await check_guild(message.guild)
+    if test_guild != is_test:
+        return
     print(f'Syncing commands...')
     try:
-        if await check_guild(message.guild):
+        if test_guild:
             client.tree.copy_global_to(guild=message.guild)
             synced = await client.tree.sync(guild=message.guild)
             print(f'Syncing to test guild only')
