@@ -99,11 +99,13 @@ async def log_error(error):
 # endregion
 
 
+# sends long functions to a separate thread so the bot doesn't hang while the function is working
 def to_thread(func: typing.Callable) -> typing.Coroutine:
     @functools.wraps(func)
     async def wrapper(*args, **kwargs):
         return await asyncio.to_thread(func, *args, **kwargs)
     return wrapper
+
 
 @client.event
 async def on_message(message):
@@ -380,19 +382,36 @@ async def recommend(interaction: discord.Interaction):
                                                                  description=full_response))
 
     full_response = ''
+    poster_link = ''
     i = 0
+    score_column = ''
+    title_column = ''
+    rating_column = ''
     for movie in sorted_movies:
         if i >= max_recommendations:
             break
-        next_movie = f"{movie[1]} [{movie[0][0]}](https://www.letterboxd.com/film/{movie[0][1]}/) {movie[0][2]}\n"
-        # 4096 characters is the max length for an embed description. End early if you're going to go over
-        if len(full_response) + len(next_movie) >= 4096:
+        if poster_link == '':
+            poster_link = lb_movie.movie_poster(movie[0][1])
+
+        score = f"{movie[1]}\n"
+        name = f"[{movie[0][0]}](https://www.letterboxd.com/film/{movie[0][1]}/)\n"
+        rating = f"{movie[0][2]}\n"
+        # field bodies can't go over 1024 characters
+        if (len(score) + len(score_column) >= 1024 or
+                len(name) + len(title_column) >= 1024 or
+                len(rating) + len(rating_column) >= 1024):
             break
-        full_response += next_movie
+        score_column += f"{movie[1]}\n"
+        title_column += f"[{movie[0][0]}](https://www.letterboxd.com/film/{movie[0][1]}/)\n"
+        rating_column += f"{movie[0][2]}\n"
         i += 1
 
-    await interaction.edit_original_response(embed=discord.Embed(title=f"**Movie Recommendation**",
-                                                                 description=full_response))
+    final_embed = discord.Embed(title=f"**Movie Recommendation**", description=full_response)
+    final_embed.set_image(url=poster_link)
+    final_embed.add_field(name="SCORE", value=score_column)
+    final_embed.add_field(name="TITLE", value=title_column)
+    final_embed.add_field(name="RATING", value=rating_column)
+    await interaction.edit_original_response(embed=final_embed)
 
     cursor.close()
     return
