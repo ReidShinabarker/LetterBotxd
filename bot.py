@@ -46,6 +46,7 @@ async def on_ready():
     log_channel = client.get_channel(int(LOG_CHANNEL))
 
     await db_connect()
+    print(f'Bot has connected to the database')
 
     if is_test:
         print('Running as a dev environment')
@@ -68,7 +69,7 @@ async def log_slash(author: discord.Member, specific, guild: discord.Guild,
     desc = "**Server:**\n"
     desc += f"{guild.name} : {guild.id}\n"
 
-    print(f"{specific} from {author}:{author.id} in {guild}:{guild.id} with params: {parameters}")
+    print(f"\n{specific} from {author}:{author.id} in {guild}:{guild.id} with params: {parameters}")
 
     if parameters is not None:
         desc += "**Parameters:**\n"
@@ -87,7 +88,7 @@ async def log_slash(author: discord.Member, specific, guild: discord.Guild,
 
 async def log_error(error):
     embed = discord.Embed(title=f'ERROR', description=str(error), colour=15548997)
-    print(f"ERROR: {error}")
+    print(f"\nERROR: {error}")
     await log(embed)
 # endregion
 
@@ -101,7 +102,6 @@ async def db_connect():
             password=str(db_pass),
             database=str(db_name)
         )
-        print(f'Bot has connected to the database')
     except Exception as e:
         await log_error(e)
 
@@ -113,9 +113,9 @@ async def get_db_cursor():
     except:
         # if the cursor failed, it is likely that the database login timed out, so try logging back in
         await db_connect()
+        print(f'\nBot has reconnected to the database')
         try:
             cursor = mydb.cursor(buffered=True)
-            print(f'Bot has reconnected to the database')
         except Exception as e:
             await log_error(e)
             return
@@ -152,7 +152,7 @@ async def sync_commands(message: discord.Message):
     test_guild = await check_guild(message.guild)
     if test_guild != is_test:
         return
-    print(f'Syncing commands...')
+    print(f'\nSyncing commands...')
     try:
         if test_guild:
             client.tree.copy_global_to(guild=message.guild)
