@@ -39,24 +39,14 @@ global max_recommendations
 @client.event
 async def on_ready():
     global log_channel
-    global mydb
     global max_recommendations
 
     await client.login(TOKEN)
     print(f'Bot is online')
     log_channel = client.get_channel(int(LOG_CHANNEL))
 
-    try:
-        mydb = mysql.connector.connect(
-            host=str(db_address),
-            user=str(db_user),
-            password=str(db_pass),
-            database=str(db_name)
-        )
-        print(f'Bot is able to connect to the database')
-    except Exception as e:
-        print(f'ERROR: While trying to connect to the database: {str(e)}')
-        await log_error(e)
+    await db_connect()
+
     if is_test:
         print('Running as a dev environment')
     else:
@@ -97,8 +87,39 @@ async def log_slash(author: discord.Member, specific, guild: discord.Guild,
 
 async def log_error(error):
     embed = discord.Embed(title=f'ERROR', description=str(error), colour=15548997)
+    print(f"ERROR: {error}")
     await log(embed)
 # endregion
+
+
+async def db_connect():
+    global mydb
+    try:
+        mydb = mysql.connector.connect(
+            host=str(db_address),
+            user=str(db_user),
+            password=str(db_pass),
+            database=str(db_name)
+        )
+        print(f'Bot has connected to the database')
+    except Exception as e:
+        await log_error(e)
+
+
+async def get_db_cursor():
+    global mydb
+    try:
+        cursor = mydb.cursor(buffered=True)
+    except:
+        # if the cursor failed, it is likely that the database login timed out, so try logging back in
+        await db_connect()
+        try:
+            cursor = mydb.cursor(buffered=True)
+            print(f'Bot has reconnected to the database')
+        except Exception as e:
+            await log_error(e)
+            return
+    return cursor
 
 
 # sends long functions to a separate thread so the bot doesn't hang while the function is working
@@ -151,7 +172,7 @@ async def check_guild(guild: discord.Guild) -> bool:
     # returns whether this is a test guild
     global is_test
     global mydb
-    cursor = mydb.cursor()
+    cursor = await get_db_cursor()
     cursor.execute(f"SELECT guild, test FROM guilds WHERE guild='{guild.id}'")
     # should only ever be length 1 or 0
     for item in cursor:
@@ -235,7 +256,7 @@ async def link_account(interaction: discord.Interaction, username: str, member: 
 
     is_admin = interaction.user.guild_permissions.administrator
 
-    cursor = mydb.cursor(buffered=True)
+    cursor = await get_db_cursor()
 
     # only allow someone to change another user's linked account if they're an admin
     if not is_admin:
@@ -318,7 +339,7 @@ async def clear_link(interaction: discord.Interaction, member: discord.Member):
                                                 ephemeral=True)
         return
 
-    cursor = mydb.cursor(buffered=True)
+    cursor = await get_db_cursor()
     cursor.execute(f"SELECT member FROM users WHERE member='{member.id}' AND guild='{interaction.guild_id}'")
     if cursor.rowcount <= 0:
         await interaction.response.send_message(f'This user does not have a paired Letterboxd account',
@@ -344,7 +365,7 @@ async def display_members(interaction: discord.Interaction):
 
     await log_slash(interaction.user, "display_members", interaction.guild)
 
-    cursor = mydb.cursor(buffered=True)
+    cursor = await get_db_cursor()
     cursor.execute(f"SELECT member, account, guild FROM users WHERE guild='{interaction.guild_id}' ORDER BY account")
     if cursor.rowcount <= 0:
         await interaction.response.send_message(f"No linked members in this discord server", ephemeral=True)
@@ -376,21 +397,23 @@ async def recommend(interaction: discord.Interaction):
     await log_slash(interaction.user, "recommend", interaction.guild,
                     {})
 
-    cursor = mydb.cursor(buffered=True)
+    cursor = await get_db_cursor()
     cursor.execute(f"SELECT member, account FROM users WHERE guild='{interaction.guild_id}'")
 
     full_response = "Finding linked Letterboxd accounts..."
     await interaction.response.send_message(embed=discord.Embed(title=f"**Movie Recommendation**",
                                                                 description=full_response))
     movies = {}
-    users = []
+    user_accounts = []
+    discord_users = []
     for item in cursor:
-        users.append(lb_user.User(str(item[1])))
+        user_accounts.append(lb_user.User(str(item[1])))
+        discord_users.append(client.get_user(int(item[0])))
 
     full_response += f"\nCollecting movies in watchlists..."
     await interaction.edit_original_response(embed=discord.Embed(title=f"**Movie Recommendation**",
                                                                  description=full_response))
-    for user in users:
+    for user in user_accounts:
         for movie in lb_user.user_films_on_watchlist(user):
             # increment the key of a movie by 2 for each watchlist it is in
             if movie in movies:
@@ -401,7 +424,7 @@ async def recommend(interaction: discord.Interaction):
     full_response += f"\nChecking which movies have already been seen by people..."
     await interaction.edit_original_response(embed=discord.Embed(title=f"**Movie Recommendation**",
                                                                  description=full_response))
-    for user in users:
+    for user in user_accounts:
         for movie in lb_user.user_films_watched(user):
             # decrement the key of a movie by 1 for each person that has seen it
             if movie in movies:
