@@ -6,12 +6,10 @@ from discord import app_commands
 from discord.ext import commands, tasks
 import random
 from dotenv import load_dotenv
-# from src.letterbot.src.letterboxdpy import user as lb_user
 from letterboxdpy import user as lb_user
 from letterboxdpy import list as lb_list
 from letterboxdpy import movie as lb_movie
-import datetime as dt
-from datetime import datetime, timedelta
+from datetime import datetime
 import mysql.connector
 import functools
 import typing
@@ -184,7 +182,21 @@ async def check_guild(guild: discord.Guild) -> bool:
     # always default test to 0. Manually set a test server in the database
     cursor.execute(f"INSERT INTO guilds (guild, test) VALUES ('{guild.id}', b'0')")
     mydb.commit()
-    cursor.close()
+
+    # check the guild for existing paired members and add new membership pairs if any
+    member_ids = ''
+    for member in guild.members:
+        member_ids += f"'{member.id}' , "
+    member_ids = member_ids.strip(" ,")
+    cursor.execute(f"SELECT member FROM users WHERE member IN ({member_ids})")
+    if cursor.rowcount >= 1:
+        rows = ''
+        for row in cursor.fetchall():
+            rows += f"('{guild.id}', {row[0]}), "
+        rows = rows.strip(", ")
+        cursor.execute(f"REPLACE INTO memberships (guild, member) VALUES {rows}")
+        mydb.commit()
+
     return False
 
 
@@ -202,6 +214,11 @@ async def help(interaction: discord.Interaction):
     total_help += await slash_describer("recommend",
                                         "Recommend a list of movies that would be good "
                                         "for the users of the discord with paired Letterboxd accounts",
+                                        parameters={})
+    total_help += await slash_describer("solo_recommend",
+                                        "Recommend a list of movies that would be good to watch alone, "
+                                        "taking into account which movies want to be watched and / or have been seen "
+                                        "by your Letterboxd mutuals",
                                         parameters={})
     total_help += await slash_describer("display_members",
                                         "Display all Discord users that have paired Letterboxd accounts "
@@ -266,7 +283,7 @@ async def link_account(interaction: discord.Interaction, username: str, member: 
             return
 
         # don't let user change their account if they already have one linked and aren't an admin
-        cursor.execute(f"SELECT * FROM users WHERE member='{member.id}'")
+        cursor.execute(f"SELECT member FROM users WHERE member='{member.id}'")
         if cursor.rowcount >= 1:
             await interaction.response.send_message(f'Letterboxd account already linked.\n'
                                                     f'Ask an admin to change your account if it is incorrect',
@@ -290,22 +307,29 @@ async def link_account(interaction: discord.Interaction, username: str, member: 
                                                     ephemeral=True)
             return
 
-    # make sure Letterboxd account hasn't already been paired to a member in this discord server
-    cursor.execute(f"SELECT member, account, guild FROM users WHERE guild='{interaction.guild_id}' "
-                   f"AND account='{username}'")
+    # make sure Letterboxd account hasn't already been paired to a member
+    cursor.execute(f"SELECT account FROM users WHERE account='{username}'")
     for item in cursor:
         await interaction.response.send_message(f'This Letterboxd account is '
-                                                f'already linked to '
-                                                f'{client.get_user(int(item[0])).mention}',
-                                                ephemeral=True)
+                                                f'already linked to another Discord user')
         cursor.close()
         return
 
     # otherwise link account
     else:
-        cursor.execute(f"REPLACE INTO users (member, account, guild) VALUES "
-                       f"('{member.id}','{username}', '{interaction.guild_id}')")
+        cursor.execute(f"REPLACE INTO users (member, account) VALUES "
+                       f"('{member.id}','{username}')")
         mydb.commit()
+
+        # reconnect to db so the child table sees the newly added and required parent table entry
+        cursor.close()
+        await db_connect()
+        cursor = mydb.cursor()
+
+        cursor.execute(f"\nREPLACE INTO memberships (guild, member) VALUES "
+                       f"('{interaction.guild_id}','{member.id}')")
+        mydb.commit()
+
         await interaction.response.send_message(f'{member.display_name} '
                                                 f'was linked to the Letterboxd account "{username}"',
                                                 ephemeral=True)
@@ -340,13 +364,13 @@ async def clear_link(interaction: discord.Interaction, member: discord.Member):
         return
 
     cursor = await get_db_cursor()
-    cursor.execute(f"SELECT member FROM users WHERE member='{member.id}' AND guild='{interaction.guild_id}'")
+    cursor.execute(f"SELECT member FROM users WHERE member='{member.id}'")
     if cursor.rowcount <= 0:
         await interaction.response.send_message(f'This user does not have a paired Letterboxd account',
                                                 ephemeral=True)
         cursor.close()
         return
-    cursor.execute(f"DELETE FROM users WHERE member='{member.id}' AND guild='{interaction.guild_id}'")
+    cursor.execute(f"DELETE FROM users WHERE member='{member.id}'")
     mydb.commit()
     await interaction.response.send_message(f'Successfully removed {member.mention} '
                                             f'and their paired Letterboxd account', ephemeral=True)
@@ -366,7 +390,9 @@ async def display_members(interaction: discord.Interaction):
     await log_slash(interaction.user, "display_members", interaction.guild)
 
     cursor = await get_db_cursor()
-    cursor.execute(f"SELECT member, account, guild FROM users WHERE guild='{interaction.guild_id}' ORDER BY account")
+    cursor.execute(f"SELECT users.member, users.account FROM users, memberships "
+                   f"WHERE memberships.guild='{interaction.guild_id}' AND users.member=memberships.member "
+                   f"ORDER BY account")
     if cursor.rowcount <= 0:
         await interaction.response.send_message(f"No linked members in this discord server", ephemeral=True)
         cursor.close()
@@ -398,7 +424,8 @@ async def recommend(interaction: discord.Interaction):
                     {})
 
     cursor = await get_db_cursor()
-    cursor.execute(f"SELECT member, account FROM users WHERE guild='{interaction.guild_id}'")
+    cursor.execute(f"SELECT users.member, users.account FROM users, memberships WHERE "
+                   f"memberships.member=users.member AND memberships.guild='{interaction.guild_id}'")
 
     full_response = "Finding linked Letterboxd accounts..."
     await interaction.response.send_message(embed=discord.Embed(title=f"**Movie Recommendation**",
@@ -493,6 +520,24 @@ async def recommend(interaction: discord.Interaction):
 
     cursor.close()
     return
+
+
+# @to_thread
+# @client.tree.command(name="solo_recommend", description="Recommend a list of movies to watch alone, "
+#                                                         "treating all Letterboxd mutuals as absent")
+# async def solo_recommend(interaction: discord.Interaction):
+#     global mydb
+#     global is_test
+#     global max_recommendations
+#
+#     if await check_guild(interaction.guild) != is_test:
+#         return
+#
+#     await log_slash(interaction.user, "recommend", interaction.guild,
+#                     {})
+#
+#     cursor = await get_db_cursor()
+#     cursor.execute(f"SELECT member, account FROM users WHERE guild='{interaction.guild_id}'")
 
 
 client.run(TOKEN)
