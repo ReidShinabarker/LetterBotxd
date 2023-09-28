@@ -311,7 +311,7 @@ async def link_account(interaction: discord.Interaction, username: str, member: 
     cursor.execute(f"SELECT account FROM users WHERE account='{username}'")
     for item in cursor:
         await interaction.response.send_message(f'This Letterboxd account is '
-                                                f'already linked to another Discord user')
+                                                f'already linked to another Discord user', ephemeral=True)
         cursor.close()
         return
 
@@ -326,8 +326,16 @@ async def link_account(interaction: discord.Interaction, username: str, member: 
         await db_connect()
         cursor = mydb.cursor()
 
+        # create a membership for the member for all registered guilds
+        cursor.execute(f"SELECT guild FROM guilds")
+        rows = ''
+        for row in cursor:
+            if client.get_guild(int(row[0])).get_member(member.id) is not None:
+                rows += f"({row[0]},'{member.id}'), "
+        rows = rows.strip(", ")
+
         cursor.execute(f"\nREPLACE INTO memberships (guild, member) VALUES "
-                       f"('{interaction.guild_id}','{member.id}')")
+                       f"{rows}")
         mydb.commit()
 
         await interaction.response.send_message(f'{member.display_name} '
