@@ -14,23 +14,16 @@ import mysql.connector
 import functools
 import typing
 import asyncio
+import database
+import log
 
-# region Dotenv setup and imports
 load_dotenv('.env')
-
 TOKEN = os.getenv('DISCORD_TOKEN')
 PREFIX = os.getenv('PREFIX')
-LOG_CHANNEL = os.getenv('LOG_CHANNEL')
-db_address = os.getenv('DATABASE_ADDRESS')
-db_name = os.getenv('DATABASE_NAME')
-db_user = os.getenv('DATABASE_USER')
-db_pass = os.getenv('DATABASE_PASS')
 is_test = os.getenv('TEST') == '1'
 
 client = commands.Bot(command_prefix=PREFIX, intents=discord.Intents.all())
 
-global log_channel
-global mydb
 global max_recommendations
 
 
@@ -41,9 +34,10 @@ async def on_ready():
 
     await client.login(TOKEN)
     print(f'Bot is online')
-    log_channel = client.get_channel(int(LOG_CHANNEL))
 
-    await db_connect()
+    await log.initiate(client)
+
+    await database.connect()
     print(f'Bot has connected to the database')
 
     if is_test:
@@ -53,71 +47,6 @@ async def on_ready():
 
     # import saved data
     max_recommendations = 10
-
-
-# region Logging
-async def log(output: discord.Embed):
-    global log_channel
-    output.set_footer(text=datetime.now())
-    await log_channel.send(embed=output)
-
-
-async def log_slash(author: discord.Member, specific, guild: discord.Guild,
-                    parameters: dict = None, message: discord.Message = None):
-    desc = "**Server:**\n"
-    desc += f"{guild.name} : {guild.id}\n"
-
-    print(f"\n{specific} from {author}:{author.id} in {guild}:{guild.id} with params: {parameters}")
-
-    if parameters is not None:
-        desc += "**Parameters:**\n"
-        for item in parameters:
-            desc += f'{item}: {parameters[item]}\n'
-
-    if message is not None:
-        desc += f'\n\n[link to message]({message.jump_url})'
-
-    embed = discord.Embed(title=f'/{specific}', description=desc)
-    embed.set_author(name=author,
-                     icon_url=author.default_avatar.url if author.display_avatar is None else author.display_avatar.url)
-
-    await log(embed)
-
-
-async def log_error(error):
-    embed = discord.Embed(title=f'ERROR', description=str(error), colour=15548997)
-    print(f"\nERROR: {error}")
-    await log(embed)
-# endregion
-
-
-async def db_connect():
-    global mydb
-    try:
-        mydb = mysql.connector.connect(
-            host=str(db_address),
-            user=str(db_user),
-            password=str(db_pass),
-            database=str(db_name)
-        )
-    except Exception as e:
-        await log_error(e)
-
-
-async def get_db_cursor():
-    global mydb
-    try:
-        cursor = mydb.cursor(buffered=True)
-    except:
-        # if the cursor failed, it is likely that the database login timed out, so try logging back in
-        await db_connect()
-        print(f'\nBot has reconnected to the database')
-        try:
-            cursor = mydb.cursor(buffered=True)
-        except Exception as e:
-            await log_error(e)
-            return
-    return cursor
 
 
 # sends long functions to a separate thread so the bot doesn't hang while the function is working
@@ -169,8 +98,7 @@ async def check_guild(guild: discord.Guild) -> bool:
     # adds the guild to the database if it isn't already then returns whether the guild is a test server
     # returns whether this is a test guild
     global is_test
-    global mydb
-    cursor = await get_db_cursor()
+    cursor = await database.get_cursor()
     cursor.execute(f"SELECT guild, test FROM guilds WHERE guild='{guild.id}'")
     # should only ever be length 1 or 0
     for item in cursor:
@@ -181,7 +109,7 @@ async def check_guild(guild: discord.Guild) -> bool:
     # will only get here if guild was not in the database
     # always default test to 0. Manually set a test server in the database
     cursor.execute(f"INSERT INTO guilds (guild, test) VALUES ('{guild.id}', b'0')")
-    mydb.commit()
+    await database.commit()
 
     # check the guild for existing paired members and add new membership pairs if any
     member_ids = ''
@@ -195,20 +123,19 @@ async def check_guild(guild: discord.Guild) -> bool:
             rows += f"('{guild.id}', {row[0]}), "
         rows = rows.strip(", ")
         cursor.execute(f"REPLACE INTO memberships (guild, member) VALUES {rows}")
-        mydb.commit()
+        await database.commit()
 
     return False
 
 
 @client.tree.command(name="help", description="Gives a more in-depth description of available commands")
 async def help(interaction: discord.Interaction):
-    global mydb
     global is_test
 
     if await check_guild(interaction.guild) != is_test:
         return
 
-    await log_slash(interaction.user, "help", interaction.guild)
+    await log.slash(interaction.user, "help", interaction.guild)
 
     total_help = f'# **SLASH COMMANDS**\n'
     total_help += await slash_describer("recommend",
@@ -252,7 +179,6 @@ async def slash_describer(name: str, description: str, parameters: dict = None):
 @app_commands.describe(username="Letterboxd account username", member="Discord member")
 async def link_account(interaction: discord.Interaction, username: str, member: discord.Member = None):
 
-    global mydb
     global is_test
 
     if await check_guild(interaction.guild) != is_test:
@@ -262,7 +188,7 @@ async def link_account(interaction: discord.Interaction, username: str, member: 
     if member is None:
         member = interaction.user
 
-    await log_slash(interaction.user, "link_account", interaction.guild,
+    await log.slash(interaction.user, "link_account", interaction.guild,
                     {"username": username, "member": member})
 
     # only allow bots to have linked accounts on test servers
@@ -273,7 +199,7 @@ async def link_account(interaction: discord.Interaction, username: str, member: 
 
     is_admin = interaction.user.guild_permissions.administrator
 
-    cursor = await get_db_cursor()
+    cursor = await database.get_cursor()
 
     # only allow someone to change another user's linked account if they're an admin
     if not is_admin:
@@ -302,7 +228,7 @@ async def link_account(interaction: discord.Interaction, username: str, member: 
                                                     f'\nPlease recheck your spelling.', ephemeral=True)
             return
         else:
-            await log_error(e)
+            await log.error(e)
             await interaction.response.send_message(f'Unknown error. Ask your admin to check the error log',
                                                     ephemeral=True)
             return
@@ -319,12 +245,12 @@ async def link_account(interaction: discord.Interaction, username: str, member: 
     else:
         cursor.execute(f"REPLACE INTO users (member, account) VALUES "
                        f"('{member.id}','{username}')")
-        mydb.commit()
+        await database.commit()
 
         # reconnect to db so the child table sees the newly added and required parent table entry
         cursor.close()
-        await db_connect()
-        cursor = mydb.cursor()
+        await database.connect()
+        cursor = await database.get_cursor()
 
         # create a membership for the member for all registered guilds
         cursor.execute(f"SELECT guild FROM guilds")
@@ -336,7 +262,7 @@ async def link_account(interaction: discord.Interaction, username: str, member: 
 
         cursor.execute(f"\nREPLACE INTO memberships (guild, member) VALUES "
                        f"{rows}")
-        mydb.commit()
+        await database.commit()
 
         await interaction.response.send_message(f'{member.display_name} '
                                                 f'was linked to the Letterboxd account "{username}"',
@@ -351,13 +277,12 @@ async def link_account(interaction: discord.Interaction, username: str, member: 
 @client.tree.command(name="clear_link", description="ADMIN: Removes a discord user from the list of linked accounts")
 @app_commands.describe(member="Discord member")
 async def clear_link(interaction: discord.Interaction, member: discord.Member):
-    global mydb
     global is_test
 
     if await check_guild(interaction.guild) != is_test:
         return
 
-    await log_slash(interaction.user, "clear_link", interaction.guild,
+    await log.slash(interaction.user, "clear_link", interaction.guild,
                     {"member": member})
 
     if not interaction.user.guild_permissions.administrator:
@@ -371,7 +296,7 @@ async def clear_link(interaction: discord.Interaction, member: discord.Member):
                                                 ephemeral=True)
         return
 
-    cursor = await get_db_cursor()
+    cursor = await database.get_cursor()
     cursor.execute(f"SELECT member FROM users WHERE member='{member.id}'")
     if cursor.rowcount <= 0:
         await interaction.response.send_message(f'This user does not have a paired Letterboxd account',
@@ -379,7 +304,7 @@ async def clear_link(interaction: discord.Interaction, member: discord.Member):
         cursor.close()
         return
     cursor.execute(f"DELETE FROM users WHERE member='{member.id}'")
-    mydb.commit()
+    await database.commit()
     await interaction.response.send_message(f'Successfully removed {member.mention} '
                                             f'and their paired Letterboxd account', ephemeral=True)
     cursor.close()
@@ -389,15 +314,14 @@ async def clear_link(interaction: discord.Interaction, member: discord.Member):
 @client.tree.command(name="display_members", description="Prints out a list of discord members "
                                                          "and their paired letterboxd accounts")
 async def display_members(interaction: discord.Interaction):
-    global mydb
     global is_test
 
     if await check_guild(interaction.guild) != is_test:
         return
 
-    await log_slash(interaction.user, "display_members", interaction.guild)
+    await log.slash(interaction.user, "display_members", interaction.guild)
 
-    cursor = await get_db_cursor()
+    cursor = await database.get_cursor()
     cursor.execute(f"SELECT users.member, users.account FROM users, memberships "
                    f"WHERE memberships.guild='{interaction.guild_id}' AND users.member=memberships.member "
                    f"ORDER BY account")
@@ -421,17 +345,16 @@ async def display_members(interaction: discord.Interaction):
 @client.tree.command(name="recommend", description="Recommend a movie based on present members' "
                                                    "watch-lists and absent members' watched-lists")
 async def recommend(interaction: discord.Interaction):
-    global mydb
     global is_test
     global max_recommendations
 
     if await check_guild(interaction.guild) != is_test:
         return
 
-    await log_slash(interaction.user, "recommend", interaction.guild,
+    await log.slash(interaction.user, "recommend", interaction.guild,
                     {})
 
-    cursor = await get_db_cursor()
+    cursor = await database.get_cursor()
     cursor.execute(f"SELECT users.member, users.account FROM users, memberships WHERE "
                    f"memberships.member=users.member AND memberships.guild='{interaction.guild_id}'")
 
@@ -534,7 +457,6 @@ async def recommend(interaction: discord.Interaction):
 # @client.tree.command(name="solo_recommend", description="Recommend a list of movies to watch alone, "
 #                                                         "treating all Letterboxd mutuals as absent")
 # async def solo_recommend(interaction: discord.Interaction):
-#     global mydb
 #     global is_test
 #     global max_recommendations
 #
@@ -544,7 +466,7 @@ async def recommend(interaction: discord.Interaction):
 #     await log_slash(interaction.user, "recommend", interaction.guild,
 #                     {})
 #
-#     cursor = await get_db_cursor()
+#     cursor = await database.get_cursor()
 #     cursor.execute(f"SELECT member, account FROM users WHERE guild='{interaction.guild_id}'")
 
 
