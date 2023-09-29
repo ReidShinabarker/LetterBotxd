@@ -11,38 +11,37 @@ db_name = os.getenv('DATABASE_NAME')
 db_user = os.getenv('DATABASE_USER')
 db_pass = os.getenv('DATABASE_PASS')
 
-global mydb
+mydb: mysql.connector.connection = None
 
 
 async def connect():
     global mydb
-    try:
-        mydb = mysql.connector.connect(
-            host=str(db_address),
-            user=str(db_user),
-            password=str(db_pass),
-            database=str(db_name)
-        )
-    except Exception as e:
-        await log.error(e)
+
+    if mydb is None or not mydb.is_connected():
+        try:
+            mydb = mysql.connector.connect(
+                host=str(db_address),
+                user=str(db_user),
+                password=str(db_pass),
+                database=str(db_name)
+            )
+        except Exception as e:
+            await log.error(e)
 
 
 async def get_cursor():
     global mydb
-    try:
-        cursor = mydb.cursor(buffered=True)
-    except:
-        # if the cursor failed, it is likely that the database login timed out, so try logging back in
-        await connect()
-        print(f'\nBot has reconnected to the database')
-        try:
-            cursor = mydb.cursor(buffered=True)
-        except Exception as e:
-            await log.error(e)
-            return
-    return cursor
+
+    # connect to database in case of timeout on previous connection
+    await connect()
+
+    return mydb.cursor(buffered=True)
 
 
 async def commit():
     global mydb
+
+    # connect to database in case of timeout on previous connection
+    await connect()
+
     mydb.commit()
