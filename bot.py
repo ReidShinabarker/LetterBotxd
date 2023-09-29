@@ -330,12 +330,15 @@ async def display_members(interaction: discord.Interaction):
         cursor.close()
         return
 
-    desc = ''
+    members = ''
+    accounts = ''
     for item in cursor:
-        desc += (f'{(await client.fetch_user(int(item[0]))).mention} : '
-                 f'[{str(item[1])}](https://letterboxd.com/{str(item[1])}/)\n')
+        members += f'{(await client.fetch_user(int(item[0]))).mention}\n'
+        accounts += f'[{str(item[1])}](https://letterboxd.com/{str(item[1])}/)\n'
 
-    final = discord.Embed(description=desc, title='**LINKED ACCOUNTS IN THIS SERVER**')
+    final = discord.Embed(title='**LINKED ACCOUNTS IN THIS SERVER**')
+    final.add_field(name='Member', value=members)
+    final.add_field(name='Letterboxd Account', value=accounts)
     await interaction.response.send_message(embed=final)
     cursor.close()
     return
