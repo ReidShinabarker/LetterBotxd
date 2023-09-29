@@ -337,7 +337,7 @@ async def display_members(interaction: discord.Interaction):
         accounts += f'[{str(item[1])}](https://letterboxd.com/{str(item[1])}/)\n'
 
     final = discord.Embed(title='**LINKED ACCOUNTS IN THIS SERVER**')
-    final.add_field(name='Member', value=members)
+    final.add_field(name='Discord Member', value=members)
     final.add_field(name='Letterboxd Account', value=accounts)
     await interaction.response.send_message(embed=final)
     cursor.close()
