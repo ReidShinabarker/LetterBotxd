@@ -16,6 +16,7 @@ import typing
 import asyncio
 import database
 import log
+from recommend import Recommendation
 
 load_dotenv('.env')
 TOKEN = os.getenv('DISCORD_TOKEN')
@@ -363,111 +364,10 @@ async def recommend(interaction: discord.Interaction, show_ratings: bool = False
     await log.slash(interaction.user, "recommend", interaction.guild,
                     {'show_ratings': show_ratings})
 
-    cursor = await database.get_cursor()
-    cursor.execute(f"SELECT users.member, users.account FROM users, memberships WHERE "
-                   f"memberships.member=users.member AND memberships.guild='{interaction.guild_id}'")
+    recommendation = Recommendation(show_ratings)
+    await recommendation.initiate(interaction)
 
-    full_response = "Finding linked Letterboxd accounts..."
-    await interaction.response.send_message(embed=discord.Embed(title=f"**Movie Recommendation**",
-                                                                description=full_response))
-    movies = {}
-    user_accounts = []
-    discord_users = []
-    for item in cursor:
-        user_accounts.append(lb_user.User(str(item[1])))
-        discord_users.append(client.get_user(int(item[0])))
-
-    full_response += f"\nCollecting movies in watchlists..."
-    await interaction.edit_original_response(embed=discord.Embed(title=f"**Movie Recommendation**",
-                                                                 description=full_response))
-    for user in user_accounts:
-        for movie in lb_user.user_films_on_watchlist(user):
-            # increment the key of a movie by 2 for each watchlist it is in
-            if movie in movies:
-                movies[movie] = movies[movie] + 2
-            else:
-                movies[movie] = 2
-
-    full_response += f"\nChecking which movies have already been seen by people..."
-    await interaction.edit_original_response(embed=discord.Embed(title=f"**Movie Recommendation**",
-                                                                 description=full_response))
-    for user in user_accounts:
-        for movie in lb_user.user_films_watched(user):
-            # decrement the key of a movie by 1 for each person that has seen it
-            if movie in movies:
-                movies[movie] = movies[movie] - 1
-
-    # this is sorted twice so that it can be in reverse score sort and not reversed alphabetical
-    sorted_movies = sorted(movies.items(), key=lambda x: (x[0]))
-    sorted_movies = sorted(sorted_movies, key=lambda x: (x[1]), reverse=True)
-
-    if show_ratings:
-        full_response += f"\nObjectively calculating how good each movie is..."
-        await interaction.edit_original_response(embed=discord.Embed(title=f"**Movie Recommendation**",
-                                                                     description=full_response))
-
-        # find the lowest score of the x number of movies that are going to be recommended
-        # to know how many ratings need to be looked up
-        lowest_score = sorted_movies[max_recommendations-1][1]
-
-        # convert back to dict to be easier to work with
-        sorted_movies = dict(sorted_movies)
-
-        # find the average rating for each recommendation and add it to the movie tuple
-        rated_movies = {}
-        for movie in sorted_movies:
-            # can stop looking up ratings if it doesn't have a chance to be recommended anyway
-            if lowest_score > sorted_movies[movie]:
-                break
-            rating = float(lb_movie.Movie(movie[1]).rating.split()[0])
-            rated_movies[(movie[0], movie[1], rating)] = movies[movie]
-
-        # sort again, this time using the rating as a tiebreaker
-        sorted_movies = sorted(rated_movies.items(), key=lambda x: (x[1], x[0][2]), reverse=True)
-
-    full_response += f"\nCalculating recommendations..."
-    await interaction.edit_original_response(embed=discord.Embed(title=f"**Movie Recommendation**",
-                                                                 description=full_response))
-
-    full_response = ''
-    poster_link = ''
-    i = 0
-    score_column = ''
-    title_column = ''
-    rating_column = ''
-    for movie in sorted_movies:
-        if i >= max_recommendations:
-            break
-        if poster_link == '':
-            poster_link = lb_movie.movie_poster(movie[0][1])
-
-        score = f"{movie[1]}\n"
-        name = f"[{movie[0][0]}](https://www.letterboxd.com/film/{movie[0][1]}/)\n"
-        rating = ''
-        if show_ratings:
-            rating = f"{movie[0][2]}\n"
-        # field bodies can't go over 1024 characters
-        if (len(score) + len(score_column) >= 1024 or
-                len(name) + len(title_column) >= 1024 or
-                len(rating) + len(rating_column) >= 1024):
-            break
-        score_column += f"{movie[1]}\n"
-        title_column += f"[{movie[0][0]}](https://www.letterboxd.com/film/{movie[0][1]}/)\n"
-        if show_ratings:
-            rating_column += f"{'%.2f' % movie[0][2]}\n"
-        i += 1
-
-    final_embed = discord.Embed(title=f"**Movie Recommendation**", description=full_response)
-    final_embed.set_image(url=poster_link)
-    final_embed.add_field(name="SCORE", value=score_column)
-    final_embed.add_field(name="TITLE", value=title_column)
-    if show_ratings:
-        final_embed.add_field(name="RATING", value=rating_column)
-    await interaction.edit_original_response(embed=final_embed)
-
-    cursor.close()
     return
-
 
 # @to_thread
 # @client.tree.command(name="solo_recommend", description="Recommend a list of movies to watch alone, "
