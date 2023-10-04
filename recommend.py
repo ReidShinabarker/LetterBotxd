@@ -106,6 +106,13 @@ class Recommendation(discord.ui.View):
                 else:
                     self.movies[movie] = value
 
+        if len(self.movies) < 1:
+            self.embed_desc_gathering = (f"No movies found for the attending users."
+                                         f"\nPlease add movies to your watchlists or select more users as present "
+                                         f"before trying again")
+            await self.update_response()
+            return
+
         await self.check_watched()
 
     async def check_watched(self):
