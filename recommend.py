@@ -58,7 +58,7 @@ class Recommendation(discord.ui.View):
             embeds.append(recommend_embed)
 
         if self.gathering_info:
-            info_embed = discord.Embed(title="**MOVIE RECOMMENDATIONS**",
+            info_embed = discord.Embed(title="**RECOMMENDATIONS IN PROGRESS**",
                                        description=self.embed_desc_gathering)
             embeds.append(info_embed)
 
