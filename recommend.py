@@ -23,17 +23,43 @@ class RecommendationUser:
         return f"{mention} - [{username}](https://letterboxd.com/{username}/)"
 
 
-class Recommendation(discord.ui.View):
+class ScoringRules:
+    def __init__(self):
+        self.watchlist_present = 5
+        self.watchlist_absent = -7
+        self.watched_present = -2
+        self.watched_absent = 1
+        self.liked_present = 1
+        self.liked_absent = 1
+
+    def change_rules(self, present_scores: tuple, absent_scores: tuple):
+        self.watchlist_present = present_scores[0]
+        self.watched_present = present_scores[1]
+        self.liked_present = present_scores[2]
+
+        self.watched_absent = absent_scores[0]
+        self.watched_absent = absent_scores[1]
+        self.liked_absent = absent_scores[2]
+
+    def get_rules(self):
+        score_tuple = (self.watchlist_present, self.watched_present, self.liked_present,
+                       self.watchlist_absent, self.watched_absent, self.liked_absent)
+        return score_tuple
+
+
+class Recommendation:
     def __init__(self, channel_for_attendance: discord.VoiceChannel, show_ratings):
-        super().__init__()
         # slash command Interaction object
         self.initiator: discord.Interaction = None
 
         # progression states
-        self.working_on_recommendations = True
         self.taking_attendance = False
         self.attendance_done = False
         self.recommendations_done = False
+
+        # views
+        self.view_attendance = None
+        self.view_final = None
 
         # embed values
         self.embed_desc_gathering = "Recommendation initiated..."
@@ -52,20 +78,25 @@ class Recommendation(discord.ui.View):
         self.attendance_channel = channel_for_attendance
         self.show_ratings = show_ratings
         self.limit_per_page = 10
+        self.scoring_rules = ScoringRules()
 
         # variables
-        self.apply_to_all = False
         self.lowest_relevant_score = None
         self.active_account_index = 0
 
     async def initiate(self, initiator: discord.Interaction):
         self.initiator = initiator
+
+        # views are created down here so that they can get reference to this initiator during their __init__
+        self.view_attendance = AttendanceView(self)
+        self.view_final = FinalView(self)
+
         await initiator.response.send_message(embeds=await self.make_embeds())
         await self.find_accounts()
 
     async def update_response(self):
         await self.initiator.edit_original_response(embeds=await self.make_embeds(),
-                                                    view=self if self.taking_attendance else None)
+                                                    view=self.get_view())
 
     async def make_embeds(self):
         embeds = []
@@ -76,7 +107,20 @@ class Recommendation(discord.ui.View):
                 recommend_embed.add_field(name=field[0], value=field[1])
             embeds.append(recommend_embed)
 
-        if self.working_on_recommendations:
+            scoring_embed = discord.Embed(title="**SCORING RULES**")
+            rules = self.scoring_rules.get_rules()
+            scoring_embed.add_field(name="_ _", value="**Movie on watchlist: **\n"
+                                                      "**Already watched movie: **\n"
+                                                      "**Liked movie: **")
+            scoring_embed.add_field(name="**PRESENT**", value=f"{rules[0]}\n"
+                                                              f"{rules[1]}\n"
+                                                              f"{rules[2]}")
+            scoring_embed.add_field(name="**ABSENT**", value=f"{rules[3]}\n"
+                                                             f"{rules[4]}\n"
+                                                             f"{rules[5]}")
+            embeds.append(scoring_embed)
+
+        else:
             info_embed = discord.Embed(title="**RECOMMENDATIONS IN PROGRESS**",
                                        description=self.embed_desc_gathering)
             embeds.append(info_embed)
@@ -88,24 +132,31 @@ class Recommendation(discord.ui.View):
                 description = (await active_user.display_user())
             attendance_embed = discord.Embed(title="**ATTENDANCE**",
                                              description=description)
-            users = ""
+            users_string = ""
             for user in self.present_users:
-                users += f"{await user.display_user()}\n"
-            attendance_embed.add_field(name="**PRESENT**", value=users)
+                users_string += f"{await user.display_user()}\n"
+            attendance_embed.add_field(name="**PRESENT**", value=users_string)
 
-            users = ""
+            users_string = ""
             for user in self.ignored_users:
-                users += f"{await user.display_user()}\n"
-            attendance_embed.add_field(name="**IGNORED**", value=users)
+                users_string += f"{await user.display_user()}\n"
+            attendance_embed.add_field(name="**IGNORED**", value=users_string)
 
-            users = ""
+            users_string = ""
             for user in self.absent_users:
-                users += f"{await user.display_user()}\n"
-            attendance_embed.add_field(name="**ABSENT**", value=users)
+                users_string += f"{await user.display_user()}\n"
+            attendance_embed.add_field(name="**ABSENT**", value=users_string)
 
             embeds.append(attendance_embed)
 
         return embeds
+
+    def get_view(self):
+        if self.taking_attendance:
+            return self.view_attendance
+        if self.recommendations_done:
+            return self.view_final
+        return None
 
     async def find_accounts(self):
         cursor = await database.get_cursor()
@@ -140,12 +191,19 @@ class Recommendation(discord.ui.View):
             await self.update_response()
 
     async def collect_movies(self):
-        self.embed_desc_gathering += f"\nCollecting movies in watchlists and those that have already been seen..."
+        self.embed_desc_gathering += f"\nCollecting movies in watchlists..."
         await self.update_response()
-
         for user in self.users:
             user.watchlist = lb_user.user_films_on_watchlist(user.account)
+
+        self.embed_desc_gathering += f"\nCollecting movies that have already been seen..."
+        await self.update_response()
+        for user in self.users:
             user.watched_movies = lb_user.user_films_watched(user.account)
+
+        self.embed_desc_gathering += f"\nCollecting movies that have been liked..."
+        await self.update_response()
+        for user in self.users:
             user.liked_movies = lb_user.user_films_liked(user.account)
 
         await self.apply_scoring()
@@ -160,23 +218,25 @@ class Recommendation(discord.ui.View):
             else:
                 self.movies[film] = value
 
+        score_rules = ScoringRules.get_rules(self.scoring_rules)
+
         # apply scoring for present users
         for user in self.present_users:
             for movie in user.watchlist:
-                add_score(5, movie)
+                add_score(score_rules[0], movie)
             for movie in user.watched_movies:
-                add_score(-2, movie)
+                add_score(score_rules[1], movie)
             for movie in user.liked_movies:
-                add_score(1, movie)
+                add_score(score_rules[2], movie)
 
         # apply scoring for absent users
         for user in self.absent_users:
             for movie in user.watchlist:
-                add_score(-7, movie)
+                add_score(score_rules[3], movie)
             for movie in user.watched_movies:
-                add_score(1, movie)
+                add_score(score_rules[4], movie)
             for movie in user.liked_movies:
-                add_score(1, movie)
+                add_score(score_rules[5], movie)
 
         sorted_movies = sorted(self.movies.items(), key=lambda x: (-x[1], x[0]))
 
@@ -250,11 +310,10 @@ class Recommendation(discord.ui.View):
         if self.show_ratings:
             self.embed_fields_recommendation.append(("RATING", rating_column))
 
-        self.working_on_recommendations = False
         self.recommendations_done = True
         await self.update_response()
 
-    async def mark_attendance(self, value=None):
+    async def mark_attendance(self, value=None, recursive=False):
         working = True
         while working and value is not None:
             self.users[self.active_account_index].attendance_value = value
@@ -269,7 +328,7 @@ class Recommendation(discord.ui.View):
             self.active_account_index += 1
             if self.active_account_index >= len(self.users):
                 self.attendance_done = True
-            if not self.apply_to_all or self.attendance_done:
+            if not recursive or self.attendance_done:
                 working = False
 
         if self.attendance_done:
@@ -284,33 +343,77 @@ class Recommendation(discord.ui.View):
 
         await self.update_response()
 
+
+# Views are defined down here so that the required Recommendation is already defined
+class AttendanceView(discord.ui.View):
+    def __init__(self, parent: Recommendation):
+        super().__init__()
+        self.parent = parent
+        self.initiator = parent.initiator
+
+        self.apply_to_all = False
+
     @discord.ui.button(label="PRESENT", style=discord.ButtonStyle.green)
     async def present_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer()
         if interaction.user != self.initiator.user:
             return
-        await self.mark_attendance(value=0)
+        await self.parent.mark_attendance(value=0, recursive=self.apply_to_all)
 
     @discord.ui.button(label="IGNORE", style=discord.ButtonStyle.grey)
     async def ignore_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer()
         if interaction.user != self.initiator.user:
             return
-        await self.mark_attendance(value=1)
+        await self.parent.mark_attendance(value=1, recursive=self.apply_to_all)
 
     @discord.ui.button(label="ABSENT", style=discord.ButtonStyle.red)
     async def absent_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer()
         if interaction.user != self.initiator.user:
             return
-        await self.mark_attendance(value=2)
+        await self.parent.mark_attendance(value=2, recursive=self.apply_to_all)
 
     @discord.ui.button(label="🟩 APPLY TO REMAINING", style=discord.ButtonStyle.blurple)
-    async def all_button_off(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def all_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user != self.initiator.user:
             await interaction.response.defer()
             return
         self.apply_to_all = not self.apply_to_all
         button.label = ("✅" if self.apply_to_all else "🟩") + " APPLY TO REMAINING"
-        await self.update_response()
+        await self.parent.update_response()
         await interaction.response.defer()
+
+
+class FinalView(discord.ui.View):
+    def __init__(self, parent: Recommendation):
+        super().__init__()
+        self.parent = parent
+        self.initiator = parent.initiator
+
+        # self.saved_interactions = {}
+
+    # @discord.ui.button(label="SCORING RULES", style=discord.ButtonStyle.gray)
+    # async def scoring_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+    #     if interaction.user in self.saved_interactions:
+    #         original_interaction = self.saved_interactions[interaction.user]
+    #         await interaction.response.defer()
+    #         await original_interaction.edit_original_response(embed=self.scoring_embed())
+    #     else:
+    #         self.saved_interactions[interaction.user] = interaction
+    #         await interaction.response.send_message(embed=self.scoring_embed(), ephemeral=True)
+    #
+    # def scoring_embed(self):
+    #     embed = discord.Embed(title="**SCORING RULES**")
+    #     rules = self.parent.scoring_rules.get_rules()
+    #     embed.add_field(name="_ _", value="Movie on watchlist: \n"
+    #                                    "Already watched movie: \n"
+    #                                    "Liked movie: ")
+    #     embed.add_field(name="**PRESENT**", value=f"{rules[0]}\n"
+    #                                               f"{rules[1]}\n"
+    #                                               f"{rules[2]}")
+    #     embed.add_field(name="**ABSENT**", value=f"{rules[3]}\n"
+    #                                              f"{rules[4]}\n"
+    #                                              f"{rules[5]}")
+    #
+    #     return embed
