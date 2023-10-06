@@ -352,9 +352,13 @@ async def display_members(interaction: discord.Interaction):
 @to_thread
 @client.tree.command(name="recommend", description="Recommend a movie based on present members' "
                                                    "watch-lists and absent members' watched-lists")
-@app_commands.describe(show_ratings="Whether you want to see average ratings of recommended movies. "
+@app_commands.describe(channel_for_attendance="The Voice Channel used to automatically take attendance. "
+                                              "If left empty, attendance is done manually.",
+                       show_ratings="Whether you want to see average ratings of recommended movies. "
                                     "Slows down recommendation process")
-async def recommend(interaction: discord.Interaction, show_ratings: bool = False):
+async def recommend(interaction: discord.Interaction,
+                    channel_for_attendance: discord.VoiceChannel = None,
+                    show_ratings: bool = True):
     global is_test
     global max_recommendations
 
@@ -362,12 +366,13 @@ async def recommend(interaction: discord.Interaction, show_ratings: bool = False
         return
 
     await log.slash(interaction.user, "recommend", interaction.guild,
-                    {'show_ratings': show_ratings})
+                    {'show_ratings': show_ratings, 'channel_for_attendance': channel_for_attendance})
 
-    recommendation = Recommendation(show_ratings)
+    recommendation = Recommendation(channel_for_attendance, show_ratings)
     await recommendation.initiate(interaction)
 
     return
+
 
 # @to_thread
 # @client.tree.command(name="solo_recommend", description="Recommend a list of movies to watch alone, "
