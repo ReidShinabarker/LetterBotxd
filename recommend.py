@@ -146,7 +146,7 @@ class Recommendation(discord.ui.View):
         for user in self.users:
             user.watchlist = lb_user.user_films_on_watchlist(user.account)
             user.watched_movies = lb_user.user_films_watched(user.account)
-            user.liked_movies = []
+            user.liked_movies = lb_user.user_films_liked(user.account)
 
         await self.apply_scoring()
 
@@ -154,35 +154,29 @@ class Recommendation(discord.ui.View):
         self.embed_desc_gathering += f"\nApplying the scoring rules to the movies eligible for recommendation..."
         await self.update_response()
 
+        def add_score(value: int, film):
+            if film in self.movies:
+                self.movies[film] = self.movies[film] + value
+            else:
+                self.movies[film] = value
+
         # apply scoring for present users
         for user in self.present_users:
             for movie in user.watchlist:
-                if movie in self.movies:
-                    self.movies[movie] = self.movies[movie] + 2
-                else:
-                    self.movies[movie] = 2
+                add_score(2, movie)
             for movie in user.watched_movies:
-                if movie in self.movies:
-                    self.movies[movie] = self.movies[movie] + -1
-                else:
-                    self.movies[movie] = -1
+                add_score(-1, movie)
             for movie in user.liked_movies:
-                pass
+                add_score(1, movie)
 
         # apply scoring for absent users
         for user in self.absent_users:
             for movie in user.watchlist:
-                if movie in self.movies:
-                    self.movies[movie] = self.movies[movie] + -2
-                else:
-                    self.movies[movie] = -2
+                add_score(-2, movie)
             for movie in user.watched_movies:
-                if movie in self.movies:
-                    self.movies[movie] = self.movies[movie] + 1
-                else:
-                    self.movies[movie] = 1
+                add_score(1, movie)
             for movie in user.liked_movies:
-                pass
+                add_score(1, movie)
 
         sorted_movies = sorted(self.movies.items(), key=lambda x: (-x[1], x[0]))
 
