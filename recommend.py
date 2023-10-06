@@ -163,16 +163,16 @@ class Recommendation(discord.ui.View):
         # apply scoring for present users
         for user in self.present_users:
             for movie in user.watchlist:
-                add_score(2, movie)
+                add_score(5, movie)
             for movie in user.watched_movies:
-                add_score(-1, movie)
+                add_score(-2, movie)
             for movie in user.liked_movies:
                 add_score(1, movie)
 
         # apply scoring for absent users
         for user in self.absent_users:
             for movie in user.watchlist:
-                add_score(-2, movie)
+                add_score(-7, movie)
             for movie in user.watched_movies:
                 add_score(1, movie)
             for movie in user.liked_movies:
