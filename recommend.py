@@ -262,13 +262,23 @@ class Recommendation:
             # can stop looking up ratings if it doesn't have a chance to be recommended anyway
             if self.lowest_relevant_score > self.movies[movie]:
                 break
-            rating = lb_movie.Movie(movie[1]).rating.split()[0]
+            movie_data = lb_movie.Movie(movie[1])
+            rating = movie_data.rating.split()[0]
+            runtime = movie_data.runtime
+
             # protection for if the movie has no rating
             try:
                 rating = float(rating)
             except:
                 rating = float(0)
-            rated_movies[(movie[0], movie[1], rating)] = self.movies[movie]
+
+            # protection for if the movie has no runtime
+            try:
+                runtime = int(runtime)
+            except:
+                runtime = ''
+
+            rated_movies[(movie[0], movie[1], rating, runtime)] = self.movies[movie]
 
         # sort again, this time using the rating as a tiebreaker
         self.movies = dict(sorted(rated_movies.items(), key=lambda x: (x[1], x[0][2]), reverse=True))
@@ -284,6 +294,7 @@ class Recommendation:
         score_column = ''
         title_column = ''
         rating_column = ''
+        runtime_column = ''
         for movie, score in self.movies.items():
             if i >= self.limit_per_page:
                 break
@@ -303,12 +314,12 @@ class Recommendation:
             score_column += score
             title_column += name
             if self.show_ratings:
-                rating_column += f"{'%.2f' % movie[2]}\n"
+                rating_column += f"{'%.2f' % movie[2]} - {movie[3]} mins\n"
             i += 1
 
         self.embed_fields_recommendation = [("SCORE", score_column), ("TITLE", title_column)]
         if self.show_ratings:
-            self.embed_fields_recommendation.append(("RATING", rating_column))
+            self.embed_fields_recommendation.append(("RATING & RUNTIME", rating_column))
 
         self.recommendations_done = True
         await self.update_response()
