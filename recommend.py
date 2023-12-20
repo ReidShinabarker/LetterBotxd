@@ -1,4 +1,5 @@
 # recommend.py
+import math
 
 import discord
 from discord.ext import commands
@@ -48,7 +49,7 @@ class ScoringRules:
 
 
 class Recommendation:
-    def __init__(self, channel_for_attendance: discord.VoiceChannel, show_ratings):
+    def __init__(self, channel_for_attendance: discord.VoiceChannel):
         # slash command Interaction object
         self.initiator: discord.Interaction = None
 
@@ -76,13 +77,14 @@ class Recommendation:
 
         # parameters
         self.attendance_channel = channel_for_attendance
-        self.show_ratings = show_ratings
         self.limit_per_page = 10
         self.scoring_rules = ScoringRules()
 
         # variables
-        self.lowest_relevant_score = None
         self.active_account_index = 0
+        self.current_page = 0
+        self.total_pages = 0
+        self.loading_recalculation = False
 
     async def initiate(self, initiator: discord.Interaction):
         self.initiator = initiator
@@ -103,6 +105,10 @@ class Recommendation:
         if self.recommendations_done:
             recommend_embed = discord.Embed(title="**MOVIE RECOMMENDATIONS**")
             recommend_embed.set_image(url=self.poster_link)
+            footer = f"page {self.current_page+1}/{self.total_pages}"
+            if self.loading_recalculation:
+                footer = f"loading {footer}... please be patient"
+            recommend_embed.set_footer(text=footer)
             for field in self.embed_fields_recommendation:
                 recommend_embed.add_field(name=field[0], value=field[1])
             embeds.append(recommend_embed)
@@ -212,18 +218,21 @@ class Recommendation:
         self.embed_desc_gathering += f"\nApplying the scoring rules to the movies eligible for recommendation..."
         await self.update_response()
 
-        def add_score(value: int, film):
+        def add_score(value: int, film, add_movie=False):
             if film in self.movies:
-                self.movies[film] = self.movies[film] + value
-            else:
-                self.movies[film] = value
+                self.movies[film] = (self.movies[film][0] + value, 0.0, 0)
+            elif add_movie:
+                self.movies[film] = (value, 0.0, 0)
 
         score_rules = ScoringRules.get_rules(self.scoring_rules)
 
-        # apply scoring for present users
+        # populate list with watchlisted movies
         for user in self.present_users:
             for movie in user.watchlist:
-                add_score(score_rules[0], movie)
+                add_score(score_rules[0], movie, True)
+
+        # apply scoring for present users
+        for user in self.present_users:
             for movie in user.watched_movies:
                 add_score(score_rules[1], movie)
             for movie in user.liked_movies:
@@ -238,90 +247,91 @@ class Recommendation:
             for movie in user.liked_movies:
                 add_score(score_rules[5], movie)
 
-        sorted_movies = sorted(self.movies.items(), key=lambda x: (-x[1], x[0]))
-
-        # find the lowest score of the x number of movies that are going to be recommended
-        # to know how many ratings need to be looked up
-        self.lowest_relevant_score = sorted_movies[self.limit_per_page - 1][1]
-
-        # convert back to dict to be easier to work with
-        self.movies = dict(sorted_movies)
-
-        if self.show_ratings:
-            await self.check_ratings()
-        else:
-            await self.calculate_recommendation()
-
-    async def check_ratings(self):
-        self.embed_desc_gathering += f"\nObjectively calculating how good each movie is..."
-        await self.update_response()
-
-        # find the average rating for each recommendation and add it to the movie tuple
-        rated_movies = {}
-        for movie in self.movies:
-            # can stop looking up ratings if it doesn't have a chance to be recommended anyway
-            if self.lowest_relevant_score > self.movies[movie]:
-                break
-            movie_data = lb_movie.Movie(movie[1])
-            rating = movie_data.rating.split()[0]
-            runtime = movie_data.runtime
-
-            # protection for if the movie has no rating
-            try:
-                rating = float(rating)
-            except:
-                rating = float(0)
-
-            # protection for if the movie has no runtime
-            try:
-                runtime = int(runtime)
-            except:
-                runtime = ''
-
-            rated_movies[(movie[0], movie[1], rating, runtime)] = self.movies[movie]
-
-        # sort again, this time using the rating as a tiebreaker
-        self.movies = dict(sorted(rated_movies.items(), key=lambda x: (x[1], x[0][2]), reverse=True))
-
         await self.calculate_recommendation()
 
     async def calculate_recommendation(self):
         self.embed_desc_gathering += f"\nCalculating recommendations..."
         await self.update_response()
 
-        self.poster_link = ''
-        i = 0
-        score_column = ''
-        title_column = ''
-        rating_column = ''
-        runtime_column = ''
-        for movie, score in self.movies.items():
-            if i >= self.limit_per_page:
-                break
-            if self.poster_link == '':
-                self.poster_link = lb_movie.movie_poster(movie[1])
+        async def find_data_for_score(my_score):
+            for my_movie in list(self.movies):
+                if self.movies[my_movie][0] == my_score:
+                    await find_movie_data(my_movie)
 
-            score = f"{score}\n"
-            name = f"[{movie[0]}](https://www.letterboxd.com/film/{movie[1]}/)\n"
-            rating = ''
-            if self.show_ratings:
-                rating = f"{movie[2]}\n"
-            # field bodies can't go over 1024 characters
-            if (len(score) + len(score_column) >= 1024 or
-                    len(name) + len(title_column) >= 1024 or
-                    len(rating) + len(rating_column) >= 1024):
-                break
-            score_column += score
-            title_column += name
-            if self.show_ratings:
-                rating_column += f"{'%.2f' % movie[2]} - {movie[3]} mins\n"
-            i += 1
+        async def find_movie_data(my_movie):
+            movie_data = lb_movie.Movie(my_movie[1])
+            my_rating = movie_data.rating.split()[0]
+            my_runtime = movie_data.runtime
 
-        self.embed_fields_recommendation = [("SCORE", score_column), ("TITLE", title_column)]
-        if self.show_ratings:
-            self.embed_fields_recommendation.append(("RATING & RUNTIME", rating_column))
+            # protection for if the movie has no rating
+            try:
+                my_rating = float(my_rating)
+            except:
+                my_rating = float(0)
+
+            # protection for if the movie has no runtime
+            try:
+                my_runtime = int(my_runtime)
+            except:
+                my_runtime = None
+
+            if my_rating != 0.0:
+                self.movies[my_movie] = (self.movies[my_movie][0], my_rating, my_runtime)
+            else:
+                del self.movies[my_movie]
+
+        # loop this until we get a page that is fully populated with movies with ratings
+        trying = True
+        while trying:
+
+            self.poster_link = ''
+            start = self.current_page * self.limit_per_page
+            end = min(start + self.limit_per_page, len(self.movies) - 1)
+            i = 0
+            score_column = ''
+            title_column = ''
+            rating_column = ''
+
+            self.movies = dict(sorted(self.movies.items(), key=lambda x: (x[1][0], x[1][1]), reverse=True))
+
+            for movie, data in self.movies.items():
+                if i < start:
+                    i += 1
+                    continue
+                if i >= end:
+                    trying = False
+                    break
+                if data[1] == 0.0:
+                    await find_data_for_score(data[0])
+                    break
+
+                if self.poster_link == '':
+                    self.poster_link = lb_movie.movie_poster(movie[1])
+
+                score = f"{data[0]}\n"
+                name = f"[{movie[0]}](https://www.letterboxd.com/film/{movie[1]}/)\n"
+                rating = f"{float(data[1]):.2f}"
+                runtime = f"{int(data[2]) // 60}:{(int(data[2]) % 60):02d}"
+
+                # field bodies can't go over 1024 characters
+                # if (len(score) + len(score_column) >= 1024 or
+                #         len(name) + len(title_column) >= 1024 or
+                #         len(rating) + len(rating_column) >= 1024):
+                #     break
+
+                score_column += score
+                title_column += name
+                rating_column += f"{rating}  -  {runtime}\n"
+                i += 1
+
+        self.embed_fields_recommendation = [("SCORE", score_column),
+                                            ("TITLE", title_column),
+                                            ("RATING & RUNTIME", rating_column)]
+
+        self.total_pages = int(math.ceil(len(self.movies) / self.limit_per_page))
 
         self.recommendations_done = True
+        self.loading_recalculation = False
         await self.update_response()
 
     async def mark_attendance(self, value=None, recursive=False):
@@ -402,29 +412,53 @@ class FinalView(discord.ui.View):
         self.parent = parent
         self.initiator = parent.initiator
 
-        # self.saved_interactions = {}
+    @discord.ui.button(label="|<", style=discord.ButtonStyle.green, disabled=True)
+    async def first_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        if interaction.user != self.initiator.user:
+            return
+        self.parent.current_page = 0
+        await self.update_buttons()
 
-    # @discord.ui.button(label="SCORING RULES", style=discord.ButtonStyle.gray)
-    # async def scoring_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-    #     if interaction.user in self.saved_interactions:
-    #         original_interaction = self.saved_interactions[interaction.user]
-    #         await interaction.response.defer()
-    #         await original_interaction.edit_original_response(embed=self.scoring_embed())
-    #     else:
-    #         self.saved_interactions[interaction.user] = interaction
-    #         await interaction.response.send_message(embed=self.scoring_embed(), ephemeral=True)
-    #
-    # def scoring_embed(self):
-    #     embed = discord.Embed(title="**SCORING RULES**")
-    #     rules = self.parent.scoring_rules.get_rules()
-    #     embed.add_field(name="_ _", value="Movie on watchlist: \n"
-    #                                    "Already watched movie: \n"
-    #                                    "Liked movie: ")
-    #     embed.add_field(name="**PRESENT**", value=f"{rules[0]}\n"
-    #                                               f"{rules[1]}\n"
-    #                                               f"{rules[2]}")
-    #     embed.add_field(name="**ABSENT**", value=f"{rules[3]}\n"
-    #                                              f"{rules[4]}\n"
-    #                                              f"{rules[5]}")
-    #
-    #     return embed
+    @discord.ui.button(label="<", style=discord.ButtonStyle.green, disabled=True)
+    async def previous_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        if interaction.user != self.initiator.user:
+            return
+        if self.parent.current_page > 0:
+            self.parent.current_page -= 1
+        await self.update_buttons()
+
+    @discord.ui.button(label=">", style=discord.ButtonStyle.green)
+    async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        if interaction.user != self.initiator.user:
+            return
+        if self.parent.current_page < self.parent.total_pages - 1:
+            self.parent.current_page += 1
+        await self.update_buttons()
+
+    @discord.ui.button(label=">|", style=discord.ButtonStyle.green)
+    async def last_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        if interaction.user != self.initiator.user:
+            return
+        self.parent.current_page = self.parent.total_pages - 1
+        await self.update_buttons()
+
+    async def update_buttons(self):
+        self.first_button.disabled = False
+        self.previous_button.disabled = False
+        self.last_button.disabled = False
+        self.next_button.disabled = False
+
+        if self.parent.current_page == 0:
+            self.first_button.disabled = True
+            self.previous_button.disabled = True
+
+        if self.parent.current_page == self.parent.total_pages - 1:
+            self.last_button.disabled = True
+            self.next_button.disabled = True
+
+        self.parent.loading_recalculation = True
+        await self.parent.calculate_recommendation()
