@@ -11,3 +11,9 @@ Among the dependencies is a [webscraper](https://github.com/ReidShinabarker/lett
 
 ![image](https://github.com/ReidShinabarker/LetterBotxd/assets/44105455/7852e71a-b379-4a72-b1c8-15a3ef0435d2)
 
+Database configuration for saving Discord member / Letterboxd account pairings:\
+![image](https://github.com/ReidShinabarker/LetterBotxd/assets/44105455/d0a124da-0d01-48c2-851e-0fa1bc3daa0e)\
+![image](https://github.com/ReidShinabarker/LetterBotxd/assets/44105455/8d22f04a-fb1a-4add-bd4c-af4b4eba9ebf)\
+![image](https://github.com/ReidShinabarker/LetterBotxd/assets/44105455/3e1c07ba-44bc-4e0c-8c3f-ebdeec9c5aac)\
+![image](https://github.com/ReidShinabarker/LetterBotxd/assets/44105455/4cd8810a-8495-4cb9-a993-0f0ac0ab80e7)
+
